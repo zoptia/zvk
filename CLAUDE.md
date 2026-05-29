@@ -96,14 +96,16 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   channel set, bin layout. Adding a toolchain = one more driver here.
 - `cmd_{ssh,self}.go` — ssh key management; combined status, self-install, and
   `self-update` (downloads + re-runs the installer).
-- `cmd_extras.go` — the `extras` command: install assorted tools that are NOT
-  version-managed toolchains (Homebrew, Claude Code). These have no channels or
-  version switching, so they live outside the toolchain driver as "recipes"
-  (`extraRecipes`): each knows how to detect itself on PATH and install itself by
-  running its official script (`runShellScript` — download + run via `bash`,
-  stdin passed through for sudo prompts). extras never tracks versions, wires
-  bin symlinks, or deletes for you (`uninstall` just prints the official steps).
-  Adding one = appending an `extra`.
+- `cmd_app.go` — the `app` command: install assorted tools/apps that are NOT
+  version-managed toolchains (Homebrew, Claude Code, scoop). These have no
+  channels or version switching, so they live outside the toolchain driver as
+  platform-specific "recipes" (`appRecipes`): each knows how to detect itself on
+  PATH and install itself by running its official script (`runShellScript` for
+  POSIX `bash`, `runPowerShellCommand` for Windows `iwr|iex`; stdin passed
+  through for sudo prompts). `app list` shows only recipes whose `osSupport`
+  matches the current GOOS. This is deliberately not a package manager — no
+  version tracking, no bin symlinks; `uninstall` just prints the official steps.
+  Adding one = appending an `appRecipe`.
 - `zigdoc.go` — the zig driver's `postInstall` hook (`writeZigDocs`). After a
   zig install it deterministically stages the raw material an assistant needs to
   target *that* build instead of stale memory: `REFERENCE.<channel>.md`
@@ -160,7 +162,8 @@ download+extract pipeline).
 - **No subprocess for decompression.** All archive handling is in-process. The
   `exec.Cmd` users are `ssh-add`, `pbcopy`/`wl-copy`/`xclip` (clipboard), the
   installer script invoked by `self-update` (`sh`/`powershell`), and the official
-  tool scripts run by `extras` (`bash`) — these pass through stdin/stdout/stderr.
+  tool scripts run by `app` (`bash` / `powershell`) — these pass through
+  stdin/stdout/stderr.
 - **Atomic file writes.** Use `writeFileAtomic` for any user-visible file
   (binaries, keys, config). It writes to a tmp file in the same dir and
   renames.

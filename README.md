@@ -88,9 +88,9 @@ zvk node list [--remote]
 zvk node which
 zvk node status [--json]
 
-zvk extras list
-zvk extras install <homebrew|claude-code>
-zvk extras uninstall <name>
+zvk app list
+zvk app install <homebrew|claude-code|scoop>
+zvk app uninstall <name>
 
 zvk ssh keygen [--name N] [--comment C] [--force]
 zvk ssh list
@@ -197,20 +197,23 @@ but don't touch any `CLAUDE.md`).
    suffixed per channel the way `zig`/`zig-nightly` are), so `lts`/`current`
    are install-time selectors, not persistent channels.
 
-### Extras
+### Apps
 
 Some tools aren't version-managed toolchains — Homebrew is a package manager,
-Claude Code is an app; neither has channels or versions to switch between. `zvk
-extras` installs these via their **official scripts** (not the tarball pipeline):
+Claude Code is an app, scoop is a Windows package manager; none has channels or
+versions to switch between. `zvk app` installs these via their **official
+scripts** (not the tarball pipeline). It is deliberately *not* a package
+manager — no version tracking, no bookkeeping.
 
-- `zvk extras list` — show available extras and whether each is on PATH.
-- `zvk extras install <name>` — run the tool's official installer (Homebrew's
-  `install.sh` non-interactively; Claude Code's `install.sh`). No-op if already
-  installed.
-- `zvk extras uninstall <name>` — prints the official removal steps; zvk never
+- `zvk app list` — show the apps installable **on this platform** and whether
+  each is on PATH (macOS/Linux → homebrew, claude-code; Windows → scoop).
+- `zvk app install <name>` — run the tool's official installer (Homebrew's
+  `install.sh` non-interactively; Claude Code's `install.sh`; scoop's
+  `iwr | iex`). No-op if already installed.
+- `zvk app uninstall <name>` — prints the official removal steps; zvk never
   deletes a system tool it didn't lay out itself.
 
-Adding an extra is one recipe in `cmd_extras.go`.
+Adding an app is one recipe in `cmd_app.go`.
 
 ### SSH
 
