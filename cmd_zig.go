@@ -29,6 +29,11 @@ const zigUsage = `Usage:
   zvk zig status [--json]              Print state (text or JSON)
 `
 
+// zigDirs is the zig on-disk layout. It's a standalone var (not zigTC.dirs) so
+// zigdoc.go can use it without forming an initialization cycle through
+// zigTC.postInstall = writeZigDocs.
+var zigDirs = toolDirs{name: "zig"}
+
 // zigTC is the Zig driver. Release picks the latest semver from the index;
 // nightly tracks `master`. Tarballs are verified by sha256 then minisign.
 var zigTC = &toolchain{
@@ -36,7 +41,7 @@ var zigTC = &toolchain{
 	usage:          zigUsage,
 	defaultChannel: zigDefaultChannel,
 	archiveStrip:   1,
-	dirs:           toolDirs{name: "zig"},
+	dirs:           zigDirs,
 	channels: []channelInfo{
 		{name: "release", label: "(release, default)"},
 		{name: "nightly", label: "(nightly, opt-in)"},
@@ -69,7 +74,8 @@ var zigTC = &toolchain{
 		}
 		return args[0], args[1], nil
 	},
-	resolve: resolveZigAsset,
+	resolve:     resolveZigAsset,
+	postInstall: writeZigDocs,
 }
 
 func zigExeName() string {
