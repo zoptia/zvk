@@ -13,6 +13,7 @@ Usage:
   zvk go   <cmd> [args...]      Go toolchain management
   zvk node <cmd> [args...]      Node.js toolchain management
   zvk ssh  <cmd> [args...]      SSH key management
+  zvk extras <cmd> [args...]    Install assorted tools (homebrew, claude-code)
 
   zvk status [--json]           Combined status (zig + go)
   zvk self-install              Copy zvk to <root>/bin/ + setup PATH
@@ -46,6 +47,8 @@ func main() {
 		err = runToolchain(nodeTC, args, stdout)
 	case "ssh":
 		err = runSSH(args, stdout)
+	case "extras":
+		err = runExtras(args, stdout)
 	case "status", "info":
 		err = runCombinedStatus(args, stdout)
 	case "self-install":

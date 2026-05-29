@@ -88,6 +88,10 @@ zvk node list [--remote]
 zvk node which
 zvk node status [--json]
 
+zvk extras list
+zvk extras install <homebrew|claude-code>
+zvk extras uninstall <name>
+
 zvk ssh keygen [--name N] [--comment C] [--force]
 zvk ssh list
 zvk ssh show <name> [--private]
@@ -192,6 +196,21 @@ but don't touch any `CLAUDE.md`).
    Node has a single active pointer (the commands `node`/`npm`/`npx` can't be
    suffixed per channel the way `zig`/`zig-nightly` are), so `lts`/`current`
    are install-time selectors, not persistent channels.
+
+### Extras
+
+Some tools aren't version-managed toolchains — Homebrew is a package manager,
+Claude Code is an app; neither has channels or versions to switch between. `zvk
+extras` installs these via their **official scripts** (not the tarball pipeline):
+
+- `zvk extras list` — show available extras and whether each is on PATH.
+- `zvk extras install <name>` — run the tool's official installer (Homebrew's
+  `install.sh` non-interactively; Claude Code's `install.sh`). No-op if already
+  installed.
+- `zvk extras uninstall <name>` — prints the official removal steps; zvk never
+  deletes a system tool it didn't lay out itself.
+
+Adding an extra is one recipe in `cmd_extras.go`.
 
 ### SSH
 
