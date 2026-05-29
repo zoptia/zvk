@@ -1,0 +1,154 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Language conventions
+
+- All project documentation, code, comments, identifiers, and commit messages: **English**.
+- Replies to the user in conversation: **Chinese**.
+
+## Commands
+
+```sh
+go build -o zvk .          # build the binary
+go vet ./...                  # static check
+go mod tidy                   # sync dependencies
+go install github.com/zoptia/zvk@latest   # build + install to $GOBIN
+```
+
+No test suite exists yet. To smoke-test install flows without touching the real
+`~/.zvk/`, run with a sandbox root:
+
+```sh
+ZVK_ROOT=$(mktemp -d) ZVK_NO_MODIFY_PATH=1 ./zvk zig install nightly
+ZVK_ROOT=$(mktemp -d) ZVK_NO_MODIFY_PATH=1 ./zvk go install latest
+```
+
+`ZVK_NO_MINISIGN=1` skips the Ed25519 verification of Zig tarballs (faster
+iteration; never set in production).
+
+## Distribution model (load-bearing)
+
+zvk distributes itself **from source**, not as a prebuilt binary:
+
+- `install.sh` / `install.ps1` are stage-0 shell scripts. They ensure a Go
+  toolchain (reuse a system `go`, else fetch the official one into
+  `<root>/.bootstrap-go`), then `GOBIN=<root>/bin go install
+  github.com/zoptia/zvk@<version>`, then run `zvk self-install` + `zvk zig
+  install`.
+- `self-update` (`cmd_self.go`) re-runs `go install <modulePath>@<version>`
+  into a temp `GOBIN`, then `writeFileAtomic`-swaps `<root>/bin/zvk`.
+
+Why source-install over a downloaded binary: a locally compiled binary carries
+no Mark-of-the-Web, so it avoids the SmartScreen/Gatekeeper prompts that hit
+downloaded executables; module sources are hash-verified via GOSUMDB; and
+releasing is just `git tag`. The trade-off: a `go` toolchain is required, and
+public `go install` implies the repo source is public.
+
+`modulePath` (`util.go`) is the single source of truth for the install path.
+
+## Architecture
+
+`zvk` is a single-binary, cross-platform toolchain + key manager. Everything
+lives under `~/.zvk/` (override with `ZVK_ROOT`).
+
+### On-disk layout (load-bearing for the whole codebase)
+
+```
+<root>/
+├── bin/                      # the only directory on user PATH
+│   ├── zvk
+│   ├── zig          → ../zig/channels/release/zig            (symlink chain)
+│   ├── zig-nightly  → ../zig/channels/nightly/zig
+│   ├── go           → ../go/channels/stable/bin/go
+│   └── gofmt        → ../go/channels/stable/bin/gofmt
+├── zig/{channels,versions}/
+├── go/{channels,versions}/
+├── ssh/keys/
+└── .bootstrap-go/            # only when the installer had to fetch its own go
+```
+
+Switching versions is just `replaceSymlink` on a single channel link — the
+`bin/` entry is unchanged, the user's PATH is untouched. On Windows, where
+unprivileged users cannot create symlinks, channels are recorded as
+`channels/<ch>.txt` files and `bin/` entries are `.cmd` shims that exec the
+real binary by absolute path (see `channel.go`, `zigInstallBin`/`goInstallBins`).
+
+### Module map
+
+- `main.go` — top-level command dispatch only.
+- `cmd_{zig,go,ssh,self}.go` — subcommand routing + implementation. Each
+  `cmd_*.go` is self-contained and pulls from shared helpers below.
+  `cmd_self.go` also holds `self-update`, which shells out to `go install` and
+  locates a toolchain via `findGoBinary` (managed go under `<root>/bin`, else
+  PATH).
+- `channel.go` — abstract `readActiveVersion` / `setActiveVersion`. POSIX uses
+  a directory symlink; Windows uses a `.txt` file. Every toolchain goes
+  through this.
+- `archive.go` — pure-Go decompression. `.zip` via `archive/zip`, `.tar.gz` via
+  `compress/gzip`, `.tar.xz` via `github.com/ulikunitz/xz`, all stacked on
+  `archive/tar`. No subprocess `tar`. Handles regular files, dirs, symlinks,
+  hardlinks (with strip-component applied to hardlink targets); other entry
+  types are skipped.
+- `http.go` — shared `http.Client` (5-minute timeout) and `downloadToMemory`.
+  Sets `User-Agent: zvk/<version>` so GitHub returns JSON, not HTML.
+- `minisign.go` — Ed25519 verification supporting both raw (`Ed`) and
+  BLAKE2b-512 prehashed (`ED`) signatures. Zig nightly uses `ED`.
+- `pathenv.go` — idempotent shell-rc edit for bash/zsh/fish. Searches for
+  `binDir` substring before appending to avoid duplicate writes.
+- `util.go` — `defaultRoot`, `currentTarget`, `writeFileAtomic` (tmp + rename),
+  `replaceSymlink` (rm + symlink), `sha256Hex`, platform predicates, the
+  user-facing `zvkVersion` constant, and the `modulePath` install path.
+
+### Toolchain install pipeline (the same shape for Zig + Go)
+
+1. Fetch upstream index JSON (`ziglang.org/download/index.json` or
+   `go.dev/dl/?mode=json`).
+2. Resolve the entry for `(channel, target)` — for Zig release, the latest
+   semver key wins; for nightly, `master`; for Go latest, the first `stable`
+   release.
+3. Skip if `versions/<ver>/` already has the executable.
+4. Download tarball → verify sha256 → (Zig only) fetch `.minisig` and verify.
+5. Extract via `extractArchive` (dispatched on URL suffix).
+6. `setActiveVersion(channel, ver)` → `installBin(channel)` → `setupPath(bin)`.
+
+The download is always to memory (no streaming). Tarballs cap around ~150 MB
+in practice, which is fine for `[]byte`.
+
+This is distinct from how **zvk itself** is installed/updated — see
+"Distribution model" above (that path goes through `go install`, not this
+download+extract pipeline).
+
+## Conventions
+
+- **Minimal dependencies.** Only `golang.org/x/crypto` (ssh + blake2b) and
+  `github.com/ulikunitz/xz`. Do not introduce more without a strong reason.
+- **No subprocess for decompression.** All archive handling is in-process. The
+  `exec.Cmd` users are `ssh-add`, `pbcopy`/`wl-copy`/`xclip` (clipboard), and
+  `go install` (self-update) — these pass through stdin/stdout/stderr.
+- **Atomic file writes.** Use `writeFileAtomic` for any user-visible file
+  (binaries, keys, config). It writes to a tmp file in the same dir and
+  renames.
+- **Symlink replacement.** Use `replaceSymlink` (rm + symlink) — never write
+  through an existing symlink.
+- **POSIX/Windows split.** Anything filesystem-shaped (channels, bin entries,
+  PATH setup) branches on `isWindows()`. Keep the POSIX path the simple one.
+
+## Environment variables
+
+| Var | Effect |
+|---|---|
+| `ZVK_ROOT` | Override default `~/.zvk` install root |
+| `ZVK_NO_MODIFY_PATH` | Skip writing PATH to shell rc |
+| `ZVK_NO_MINISIGN` | Skip minisign verification of Zig tarballs (dev only) |
+| `ZVK_VERSION` | Module version the installer / `self-update` installs |
+| `GOPROXY` | Go module proxy used by the installer and `self-update` |
+
+## Release / version bumps
+
+Releasing is `git tag vX.Y.Z && git push --tags`. `go install
+github.com/zoptia/zvk@latest` then resolves that tag, so the installer and
+`self-update` pick it up with no asset-building step.
+
+`zvkVersion` in `util.go` is the user-facing version reported by `zvk version`
+and used in the `User-Agent` header — bump it to match the tag you push.
