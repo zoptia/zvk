@@ -1,7 +1,9 @@
 #!/bin/sh
-# zvk installer (POSIX): ensure a Go toolchain, then build & install zvk from
-# source with `go install`. The compiled binary carries no Mark-of-the-Web and
-# is hash-verified through GOSUMDB.
+# zvk installer (POSIX): download a Go toolchain that zvk manages itself, build &
+# install zvk from source with it via `go install`, then wire up PATH and pull a
+# Zig toolchain. The compiled binary carries no Mark-of-the-Web and module
+# sources are hash-verified through GOSUMDB. Re-running this script repairs and
+# upgrades an existing install (it is the canonical update path).
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/zoptia/zvk/main/install.sh | sh
@@ -29,36 +31,44 @@ fetch() {
     fi
 }
 
-# 1. Ensure a `go` toolchain. Prefer a system go; otherwise fetch the official
-#    (signed, high-reputation) toolchain into a private bootstrap dir.
-if command -v go >/dev/null 2>&1; then
-    echo "[zvk] using existing $(go version)"
-    GO=go
-else
-    case "$(uname -s)" in
-        Linux)  goos=linux ;;
-        Darwin) goos=darwin ;;
-        *) echo "[zvk] unsupported OS: $(uname -s)" >&2; exit 1 ;;
-    esac
-    case "$(uname -m)" in
-        x86_64|amd64)  goarch=amd64 ;;
-        aarch64|arm64) goarch=arm64 ;;
-        *) echo "[zvk] unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-    esac
-    gover=$(fetch "https://go.dev/VERSION?m=text" | head -n1)
-    echo "[zvk] no system go found; installing $gover toolchain"
-    bootstrap="$ROOT/.bootstrap-go"
-    rm -rf "$bootstrap"
-    mkdir -p "$bootstrap"
-    fetch "https://go.dev/dl/${gover}.${goos}-${goarch}.tar.gz" | tar -xzf - -C "$bootstrap"
-    GO="$bootstrap/go/bin/go"
-fi
+case "$(uname -s)" in
+    Linux)  goos=linux ;;
+    Darwin) goos=darwin ;;
+    *) echo "[zvk] unsupported OS: $(uname -s)" >&2; exit 1 ;;
+esac
+case "$(uname -m)" in
+    x86_64|amd64)  goarch=amd64 ;;
+    aarch64|arm64) goarch=arm64 ;;
+    *) echo "[zvk] unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
 
-# 2. Build & install zvk straight into <root>/bin via GOBIN.
+# zvk always manages its own Go, regardless of any system install. Download the
+# latest Go straight into the managed versions dir: this same copy both builds
+# zvk and becomes zvk's default `go`. A non-zvk `go` already on PATH (if any) is
+# reported afterwards by `zvk go install` — zvk never touches the system copy.
+gover=$(fetch "https://go.dev/VERSION?m=text" | head -n1)
+godir="$ROOT/go/versions/$gover"
+if [ ! -x "$godir/bin/go" ]; then
+    echo "[zvk] installing managed Go $gover into $godir"
+    rm -rf "$godir"
+    mkdir -p "$godir"
+    # Go archives wrap everything in a top-level go/ — strip it.
+    fetch "https://go.dev/dl/${gover}.${goos}-${goarch}.tar.gz" | tar -xzf - -C "$godir" --strip-components=1
+else
+    echo "[zvk] managed Go $gover already present"
+fi
+GO="$godir/bin/go"
+
+# Build & install zvk into <root>/bin via GOBIN. GOTOOLCHAIN=local stops Go from
+# re-downloading a toolchain just to satisfy go.mod — the managed one suffices.
 mkdir -p "$ROOT/bin"
 echo "[zvk] go install ${MODULE}@${VERSION}"
-GOBIN="$ROOT/bin" "$GO" install "${MODULE}@${VERSION}"
+GOTOOLCHAIN=local GOBIN="$ROOT/bin" "$GO" install "${MODULE}@${VERSION}"
 
-# 3. Wire up PATH and pull a Zig toolchain.
+# Wire up PATH, promote the just-extracted Go to the `stable` channel, then pull
+# Zig. `go use` is a purely local re-link (no index fetch, no download): it
+# pins stable at exactly the version that built zvk, rather than re-resolving
+# "latest" — which could have moved on and pulled a different Go.
 "$ROOT/bin/zvk" self-install
+"$ROOT/bin/zvk" go use "$gover"
 "$ROOT/bin/zvk" zig install

@@ -5,20 +5,26 @@ Go. Single binary, runs on macOS, Linux, and Windows. Everything lives under
 `~/.zvk/` (override with `ZVK_ROOT`).
 
 ```
-zvk zig install            # install the latest stable zig
-zvk zig install nightly    # install the latest nightly zig
-zvk go  install            # install the latest stable go
-zvk ssh keygen             # generate an ed25519 keypair
+zvk zig  install           # install the latest stable zig
+zvk zig  install nightly   # install the latest nightly zig
+zvk go   install           # install the latest stable go
+zvk node install           # install the latest LTS node
+zvk ssh  keygen            # generate an ed25519 keypair
 ```
 
 ## Install
 
-zvk installs itself **from source**: the installer ensures a Go toolchain
-(reusing a system `go`, or fetching the official one if absent), then runs
-`go install github.com/zoptia/zvk@latest`. The resulting binary is compiled
-locally — it carries no Mark-of-the-Web, so it avoids the SmartScreen/Gatekeeper
-prompts that hit downloaded executables, and its sources are hash-verified
-through `sum.golang.org` (GOSUMDB).
+zvk installs itself **from source**: the installer always downloads the latest
+Go into the directory zvk manages (`~/.zvk/go/versions/<ver>/`) — never reusing
+a system `go` — then builds zvk with it via `go install
+github.com/zoptia/zvk@latest`. That same Go becomes zvk's default `go`. The
+resulting binary is compiled locally — it carries no Mark-of-the-Web, so it
+avoids the SmartScreen/Gatekeeper prompts that hit downloaded executables, and
+its sources are hash-verified through `sum.golang.org` (GOSUMDB).
+
+If a non-zvk `go` (or `node`) is already on your PATH, zvk leaves it untouched
+and prints an advisory with the command to remove it — zvk's own `bin/` is
+prepended to PATH, so the managed copy wins in new shells regardless.
 
 ### macOS / Linux
 
@@ -33,24 +39,27 @@ irm https://raw.githubusercontent.com/zoptia/zvk/main/install.ps1 | iex
 ```
 
 The installer puts the `zvk` binary into `~/.zvk/bin/`, adds that directory to
-PATH, and runs `zvk zig install` to pull the latest stable Zig.
+PATH, promotes the freshly downloaded Go to the `stable` channel, and runs `zvk
+zig install` to pull the latest stable Zig.
 
 > Behind a firewall or in mainland China, set a module proxy first:
 > `export GOPROXY=https://goproxy.cn,direct` (PowerShell: `$env:GOPROXY=...`).
 
 ## Update
 
+Updating zvk is just **re-running the installer**, and `self-update` is a
+convenience that does exactly that — it downloads the canonical
+`install.sh`/`install.ps1` and runs it. Keeping the real logic in one place
+means there is a single update path that cannot drift from the install path.
+
 ```sh
-zvk self-update                 # rebuild & install the latest release
+zvk self-update                 # re-run the installer for the latest release
 zvk self-update --version=v0.2.0
 zvk self-update --dry-run       # show what it would do
-```
 
-`self-update` re-runs `go install github.com/zoptia/zvk@<version>` into an
-isolated `GOBIN`, then atomically swaps the binary in `~/.zvk/bin/`. Building to
-a temp dir first avoids clobbering the live binary on a failed build and
-sidesteps the Windows "cannot overwrite a running .exe" lock. It requires a
-`go` toolchain (the one zvk manages, or one on PATH).
+# equivalently, just re-run the installer:
+curl -fsSL https://raw.githubusercontent.com/zoptia/zvk/main/install.sh | sh
+```
 
 ## Commands
 
@@ -70,6 +79,14 @@ zvk go uninstall <version>
 zvk go list [--remote]
 zvk go which
 zvk go status [--json]
+
+zvk node install [lts|current|<version>]
+zvk node update
+zvk node use <version>
+zvk node uninstall <version>
+zvk node list [--remote]
+zvk node which
+zvk node status [--json]
 
 zvk ssh keygen [--name N] [--comment C] [--force]
 zvk ssh list
@@ -95,13 +112,19 @@ zvk help
 │   ├── zig          → ../zig/channels/release/zig
 │   ├── zig-nightly  → ../zig/channels/nightly/zig
 │   ├── go           → ../go/channels/stable/bin/go
-│   └── gofmt        → ../go/channels/stable/bin/gofmt
+│   ├── gofmt        → ../go/channels/stable/bin/gofmt
+│   ├── node         → ../node/channels/default/bin/node
+│   ├── npm          → ../node/channels/default/bin/npm
+│   └── npx          → ../node/channels/default/bin/npx
 ├── zig/
 │   ├── channels/{release,nightly}          # → ../versions/<ver>
 │   └── versions/<ver>/
 ├── go/
 │   ├── channels/stable                     # → ../versions/<ver>
 │   └── versions/<ver>/                     # top level is the unpacked go/ contents
+├── node/
+│   ├── channels/default                    # → ../versions/<ver>
+│   └── versions/<ver>/
 └── ssh/
     └── keys/
         ├── id_ed25519_xxxxxxxx
@@ -131,6 +154,20 @@ zvk help
    directory).
 4. Maintain `go/channels/stable` and the `bin/{go,gofmt}` symlinks.
 
+### Node.js
+
+1. Fetch <https://nodejs.org/dist/index.json> and resolve the version: `lts`
+   picks the newest LTS release, `current` the newest overall, or an exact
+   version like `v20.11.0`.
+2. Skip if already installed.
+3. Otherwise fetch that release's `SHASUMS256.txt`, look up the sha256 for this
+   platform's archive, download → verify sha256 → extract in pure Go
+   (`.tar.gz` on POSIX, `.zip` on Windows).
+4. Maintain `node/channels/default` and the `bin/{node,npm,npx}` symlinks.
+   Node has a single active pointer (the commands `node`/`npm`/`npx` can't be
+   suffixed per channel the way `zig`/`zig-nightly` are), so `lts`/`current`
+   are install-time selectors, not persistent channels.
+
 ### SSH
 
 1. `keygen` calls `crypto/ed25519.GenerateKey` to produce a keypair.
@@ -148,8 +185,8 @@ zvk help
 | `ZVK_ROOT`           | Install root (defaults to `~/.zvk`)                  |
 | `ZVK_NO_MODIFY_PATH` | Skip writing to shell rc                                |
 | `ZVK_NO_MINISIGN`    | Skip minisign verification of Zig tarballs (not advised) |
-| `ZVK_VERSION`        | Module version the installer / `self-update` installs   |
-| `GOPROXY`            | Go module proxy used by the installer and `self-update` |
+| `ZVK_VERSION`        | Module version the installer builds (`self-update` forwards it) |
+| `GOPROXY`            | Go module proxy used by the installer                   |
 
 ## Build from source
 

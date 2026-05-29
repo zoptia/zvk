@@ -6,12 +6,13 @@ import (
 	"os"
 )
 
-const usage = `zvk - multi-toolchain version manager (zig, go) + ssh key manager
+const usage = `zvk - multi-toolchain version manager (zig, go, node) + ssh key manager
 
 Usage:
-  zvk zig <cmd> [args...]       Zig toolchain management
-  zvk go  <cmd> [args...]       Go toolchain management
-  zvk ssh <cmd> [args...]       SSH key management
+  zvk zig  <cmd> [args...]      Zig toolchain management
+  zvk go   <cmd> [args...]      Go toolchain management
+  zvk node <cmd> [args...]      Node.js toolchain management
+  zvk ssh  <cmd> [args...]      SSH key management
 
   zvk status [--json]           Combined status (zig + go)
   zvk self-install              Copy zvk to <root>/bin/ + setup PATH
@@ -38,9 +39,11 @@ func main() {
 	var err error
 	switch cmd {
 	case "zig":
-		err = runZig(args, stdout)
+		err = runToolchain(zigTC, args, stdout)
 	case "go":
-		err = runGo(args, stdout)
+		err = runToolchain(goTC, args, stdout)
+	case "node":
+		err = runToolchain(nodeTC, args, stdout)
 	case "ssh":
 		err = runSSH(args, stdout)
 	case "status", "info":

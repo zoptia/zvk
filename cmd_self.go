@@ -11,30 +11,33 @@ import (
 )
 
 func runCombinedStatus(args []string, stdout io.Writer) error {
+	tools := []*toolchain{zigTC, goTC, nodeTC}
 	jsonMode := len(args) > 0 && (args[0] == "--json" || args[0] == "-j")
 	if jsonMode {
-		zs, err := collectZigStatus()
-		if err != nil {
-			return err
-		}
-		gs, err := collectGoStatus()
-		if err != nil {
-			return err
-		}
-		combined := map[string]any{
-			"zig": zs,
-			"go":  gs,
+		combined := map[string]any{}
+		for _, tc := range tools {
+			s, err := collectToolStatus(tc)
+			if err != nil {
+				return err
+			}
+			combined[tc.name] = s
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(combined)
 	}
-	fmt.Fprintln(stdout, "=== zig ===")
-	if err := runZigStatus(nil, stdout); err != nil {
-		return err
+	for i, tc := range tools {
+		if i > 0 {
+			fmt.Fprintln(stdout)
+		}
+		fmt.Fprintf(stdout, "=== %s ===\n", tc.name)
+		s, err := collectToolStatus(tc)
+		if err != nil {
+			return err
+		}
+		renderToolStatus(tc, s, stdout)
 	}
-	fmt.Fprintln(stdout, "\n=== go ===")
-	return runGoStatus(nil, stdout)
+	return nil
 }
 
 // ============================================================================
@@ -85,23 +88,25 @@ func copyFile(src, dst string, mode os.FileMode) error {
 }
 
 // ============================================================================
-// self-update — rebuild from source via `go install <module>@<version>`.
+// self-update — re-run the canonical installer from source.
 //
-// Unlike a download-and-replace updater, this compiles the binary locally, so
-// on Windows it carries no Mark-of-the-Web (the usual SmartScreen trigger), and
-// the module sources are hash-verified through GOSUMDB. It needs a `go`
-// toolchain: the one zvk manages under <root>/bin is preferred, else PATH.
+// Upgrading zvk is "re-run the installer"; self-update is a convenience that
+// does exactly that: download install.sh / install.ps1 and execute it. The
+// installer manages its own Go and `go install`s the module, so the rebuilt
+// binary carries no Mark-of-the-Web (the usual SmartScreen trigger) and its
+// sources are hash-verified through GOSUMDB. Keeping the real logic solely in
+// the installer means there is one update path, not two that can drift.
 // ============================================================================
 
 func runSelfUpdate(args []string, stdout io.Writer) error {
 	dryRun := false
-	version := "latest"
+	version := "" // empty → installer default (latest)
 	for _, a := range args {
 		switch {
 		case a == "--dry-run":
 			dryRun = true
 		case a == "--force" || a == "-f":
-			// Retained for compatibility; `go install` always rebuilds.
+			// Retained for compatibility; the installer always rebuilds.
 		case strings.HasPrefix(a, "--version="):
 			version = strings.TrimPrefix(a, "--version=")
 		default:
@@ -109,69 +114,51 @@ func runSelfUpdate(args []string, stdout io.Writer) error {
 		}
 	}
 
-	root, err := defaultRoot()
-	if err != nil {
-		return err
+	repo := strings.TrimPrefix(modulePath, "github.com/")
+	scriptName := "install.sh"
+	if isWindows() {
+		scriptName = "install.ps1"
 	}
-	bd := binDir(root)
-	target := filepath.Join(bd, zvkBinaryName())
+	scriptURL := "https://raw.githubusercontent.com/" + repo + "/main/" + scriptName
 
-	goBin, err := findGoBinary(root)
-	if err != nil {
-		return err
+	fmt.Fprintf(stdout, "[zvk] current %s; self-update re-runs the installer\n", zvkVersion)
+	fmt.Fprintf(stdout, "[zvk] installer: %s\n", scriptURL)
+	if version != "" {
+		fmt.Fprintf(stdout, "[zvk] target version: %s\n", version)
 	}
-	spec := modulePath + "@" + version
-
-	fmt.Fprintf(stdout, "[zvk] current %s; building %s with %s\n", zvkVersion, spec, goBin)
 	if dryRun {
-		fmt.Fprintf(stdout, "[zvk] dry-run: would `go install %s` then install to %s\n", spec, target)
+		fmt.Fprintf(stdout, "[zvk] dry-run: would download and run %s\n", scriptURL)
 		return nil
 	}
 
-	// Build into an isolated GOBIN, then atomically move into place. Building to
-	// a temp dir first keeps a failed build from clobbering the live binary, and
-	// sidesteps the Windows "cannot overwrite a running .exe" file lock.
-	tmp, err := os.MkdirTemp("", "zvk-update-")
+	script, err := downloadToMemory(scriptURL)
+	if err != nil {
+		return fmt.Errorf("fetch installer: %w", err)
+	}
+	tmp, err := os.MkdirTemp("", "zvk-selfupdate-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(tmp)
+	scriptPath := filepath.Join(tmp, scriptName)
+	if err := os.WriteFile(scriptPath, script, 0o755); err != nil {
+		return err
+	}
 
-	cmd := exec.Command(goBin, "install", spec)
-	cmd.Env = append(os.Environ(), "GOBIN="+tmp)
+	var cmd *exec.Cmd
+	if isWindows() {
+		cmd = exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath)
+	} else {
+		cmd = exec.Command("sh", scriptPath)
+	}
+	cmd.Env = os.Environ()
+	if version != "" {
+		cmd.Env = append(cmd.Env, "ZVK_VERSION="+version)
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("go install %s: %w", spec, err)
+		return fmt.Errorf("installer failed: %w", err)
 	}
-
-	built := filepath.Join(tmp, zvkBinaryName())
-	data, err := os.ReadFile(built)
-	if err != nil {
-		return fmt.Errorf("built binary not found under GOBIN: %w", err)
-	}
-	if err := os.MkdirAll(bd, 0o755); err != nil {
-		return err
-	}
-	if err := writeFileAtomic(target, data, 0o755); err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout, "[zvk] updated %s\n", target)
 	return nil
-}
-
-// findGoBinary locates a `go` executable for self-update: the toolchain zvk
-// manages under <root>/bin first, then PATH. On Windows the managed entry is a
-// .cmd shim that is awkward to exec directly, so PATH is used there.
-func findGoBinary(root string) (string, error) {
-	if !isWindows() {
-		managed := filepath.Join(binDir(root), "go")
-		if _, err := os.Stat(managed); err == nil {
-			return managed, nil
-		}
-	}
-	if p, err := exec.LookPath("go"); err == nil {
-		return p, nil
-	}
-	return "", fmt.Errorf("no `go` toolchain found; install Go or run `zvk go install` first")
 }

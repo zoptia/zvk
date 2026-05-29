@@ -31,13 +31,17 @@ iteration; never set in production).
 
 zvk distributes itself **from source**, not as a prebuilt binary:
 
-- `install.sh` / `install.ps1` are stage-0 shell scripts. They ensure a Go
-  toolchain (reuse a system `go`, else fetch the official one into
-  `<root>/.bootstrap-go`), then `GOBIN=<root>/bin go install
-  github.com/zoptia/zvk@<version>`, then run `zvk self-install` + `zvk zig
-  install`.
-- `self-update` (`cmd_self.go`) re-runs `go install <modulePath>@<version>`
-  into a temp `GOBIN`, then `writeFileAtomic`-swaps `<root>/bin/zvk`.
+- `install.sh` / `install.ps1` are stage-0 shell scripts. They always download
+  the latest Go into the managed `<root>/go/versions/<ver>/` (never reuse a
+  system `go`), build zvk with it via `GOTOOLCHAIN=local GOBIN=<root>/bin go
+  install github.com/zoptia/zvk@<version>`, then run `zvk self-install`, `zvk go
+  install latest` (promotes that already-extracted Go to the `stable` channel —
+  re-links, no re-download), and `zvk zig install`. That managed Go is both
+  zvk's build dependency and its default `go`. Re-running the script
+  repairs/upgrades in place.
+- `self-update` (`cmd_self.go`) is a thin convenience: it downloads the
+  canonical `install.sh`/`install.ps1` and executes it. The installer is the
+  single update path — there are not two code paths that can drift.
 
 Why source-install over a downloaded binary: a locally compiled binary carries
 no Mark-of-the-Web, so it avoids the SmartScreen/Gatekeeper prompts that hit
@@ -61,27 +65,37 @@ lives under `~/.zvk/` (override with `ZVK_ROOT`).
 │   ├── zig          → ../zig/channels/release/zig            (symlink chain)
 │   ├── zig-nightly  → ../zig/channels/nightly/zig
 │   ├── go           → ../go/channels/stable/bin/go
-│   └── gofmt        → ../go/channels/stable/bin/gofmt
+│   ├── gofmt        → ../go/channels/stable/bin/gofmt
+│   ├── node         → ../node/channels/lts/bin/node
+│   ├── npm          → ../node/channels/lts/bin/npm
+│   └── npx          → ../node/channels/lts/bin/npx
 ├── zig/{channels,versions}/
 ├── go/{channels,versions}/
-├── ssh/keys/
-└── .bootstrap-go/            # only when the installer had to fetch its own go
+├── node/{channels,versions}/
+└── ssh/keys/
 ```
 
 Switching versions is just `replaceSymlink` on a single channel link — the
 `bin/` entry is unchanged, the user's PATH is untouched. On Windows, where
 unprivileged users cannot create symlinks, channels are recorded as
 `channels/<ch>.txt` files and `bin/` entries are `.cmd` shims that exec the
-real binary by absolute path (see `channel.go`, `zigInstallBin`/`goInstallBins`).
+real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`).
 
 ### Module map
 
-- `main.go` — top-level command dispatch only.
-- `cmd_{zig,go,ssh,self}.go` — subcommand routing + implementation. Each
-  `cmd_*.go` is self-contained and pulls from shared helpers below.
-  `cmd_self.go` also holds `self-update`, which shells out to `go install` and
-  locates a toolchain via `findGoBinary` (managed go under `<root>/bin`, else
-  PATH).
+- `main.go` — top-level command dispatch only (a small registry mapping
+  `zig`/`go`/`node` to their driver).
+- `toolchain.go` — the declarative `toolchain` driver struct plus the single
+  install/use/uninstall/list/which/status pipeline every managed toolchain runs
+  through. Differences (index, target, verification, channels, bin layout) are
+  driver fields, not duplicated command code. Also holds shadow-tool detection
+  (`warnShadowedTools`): when a managed command (`go`, `node`) is also on PATH
+  outside zvk, it prints an advisory + cleanup hints and never touches it.
+- `cmd_{zig,go,node}.go` — one `toolchain` driver each: index parsing, target
+  mapping, verification (zig minisign, go/node sha256, node SHASUMS256.txt),
+  channel set, bin layout. Adding a toolchain = one more driver here.
+- `cmd_{ssh,self}.go` — ssh key management; combined status, self-install, and
+  `self-update` (downloads + re-runs the installer).
 - `channel.go` — abstract `readActiveVersion` / `setActiveVersion`. POSIX uses
   a directory symlink; Windows uses a `.txt` file. Every toolchain goes
   through this.
@@ -100,7 +114,7 @@ real binary by absolute path (see `channel.go`, `zigInstallBin`/`goInstallBins`)
   `replaceSymlink` (rm + symlink), `sha256Hex`, platform predicates, the
   user-facing `zvkVersion` constant, and the `modulePath` install path.
 
-### Toolchain install pipeline (the same shape for Zig + Go)
+### Toolchain install pipeline (one shape for Zig, Go, Node — see `toolchain.go`)
 
 1. Fetch upstream index JSON (`ziglang.org/download/index.json` or
    `go.dev/dl/?mode=json`).
@@ -125,7 +139,8 @@ download+extract pipeline).
   `github.com/ulikunitz/xz`. Do not introduce more without a strong reason.
 - **No subprocess for decompression.** All archive handling is in-process. The
   `exec.Cmd` users are `ssh-add`, `pbcopy`/`wl-copy`/`xclip` (clipboard), and
-  `go install` (self-update) — these pass through stdin/stdout/stderr.
+  the installer script invoked by `self-update` (`sh`/`powershell`) — these pass
+  through stdin/stdout/stderr.
 - **Atomic file writes.** Use `writeFileAtomic` for any user-visible file
   (binaries, keys, config). It writes to a tmp file in the same dir and
   renames.
