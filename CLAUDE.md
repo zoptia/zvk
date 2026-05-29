@@ -96,6 +96,16 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   channel set, bin layout. Adding a toolchain = one more driver here.
 - `cmd_{ssh,self}.go` — ssh key management; combined status, self-install, and
   `self-update` (downloads + re-runs the installer).
+- `zigdoc.go` — the zig driver's `postInstall` hook (`writeZigDocs`). After a
+  zig install it deterministically stages the raw material an assistant needs to
+  target *that* build instead of stale memory: `REFERENCE.<channel>.md`
+  (version-pinned pointers + grep topic map), `STD_INDEX.md` (column-0 `pub`
+  decls per top-level `lib/std` file — not the ~25k full tree), a local
+  `release-notes.html` snapshot, an `ADAPTATION.prompt.md`, and `zig/CLAUDE.md`
+  (idempotently `@import`ed into `~/.claude/CLAUDE.md`). zvk never calls an LLM —
+  it stages inputs + a prompt; the assistant writes `ADAPTATION.md` in-session.
+  All best-effort: failures print advisories, never failing the install. Gated
+  by `ZVK_NO_DOCS` / `ZVK_NO_CLAUDE_MD`.
 - `channel.go` — abstract `readActiveVersion` / `setActiveVersion`. POSIX uses
   a directory symlink; Windows uses a `.txt` file. Every toolchain goes
   through this.
@@ -125,6 +135,8 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
 4. Download tarball → verify sha256 → (Zig only) fetch `.minisig` and verify.
 5. Extract via `extractArchive` (dispatched on URL suffix).
 6. `setActiveVersion(channel, ver)` → `installBin(channel)` → `setupPath(bin)`.
+7. Optional `postInstall(root, ver, channel)` for side artifacts — zig uses it
+   for the Claude Code reference docs (`zigdoc.go`); go/node leave it nil.
 
 The download is always to memory (no streaming). Tarballs cap around ~150 MB
 in practice, which is fine for `[]byte`.
@@ -156,6 +168,8 @@ download+extract pipeline).
 | `ZVK_ROOT` | Override default `~/.zvk` install root |
 | `ZVK_NO_MODIFY_PATH` | Skip writing PATH to shell rc |
 | `ZVK_NO_MINISIGN` | Skip minisign verification of Zig tarballs (dev only) |
+| `ZVK_NO_DOCS` | Skip generating the zig Claude Code reference docs (see `zigdoc.go`) |
+| `ZVK_NO_CLAUDE_MD` | Generate the zig reference docs but don't write/inject `CLAUDE.md` |
 | `ZVK_VERSION` | Module version the installer / `self-update` installs |
 | `GOPROXY` | Go module proxy used by the installer and `self-update` |
 

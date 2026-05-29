@@ -144,6 +144,31 @@ zvk help
    (`github.com/ulikunitz/xz` + stdlib `archive/tar`) into
    `~/.zvk/zig/versions/<ver>/`.
 4. Maintain the channel symlink and the bin symlink.
+5. Generate **assistant reference docs** for that build (see below).
+
+#### Assistant reference docs (Zig only)
+
+Zig has no stability promise — stdlib and the build system are reorganized
+across releases — and an AI assistant's training data lags the current compiler,
+so it tends to write outdated Zig. After installing Zig, zvk deterministically
+lays out the raw material an assistant needs to target *this* build instead of
+stale memory (no LLM is involved — zvk only stages inputs):
+
+- `zig/REFERENCE.<channel>.md` — version-pinned pointers (local `langref.html`,
+  stdlib root) + a grep "topic map" (I/O, fs, http, Build, crypto…).
+- `zig/versions/<ver>/STD_INDEX.md` — a lightweight "which file exports what"
+  index (column-0 `pub` decls of each top-level `lib/std` file).
+- `zig/versions/<ver>/release-notes.html` — the official breaking-change list,
+  snapshotted locally.
+- `zig/versions/<ver>/ADAPTATION.prompt.md` — a prompt you hand to Claude; it
+  reads the notes + index and writes an `ADAPTATION.md` cheat sheet of "what my
+  memory gets wrong about this version".
+- `zig/CLAUDE.md` — a decision table (`zig` vs `zig-nightly` by a project's
+  `minimum_zig_version`), idempotently `@import`ed into `~/.claude/CLAUDE.md` so
+  Claude Code loads it automatically.
+
+Disable with `ZVK_NO_DOCS` (skip entirely) or `ZVK_NO_CLAUDE_MD` (keep the docs
+but don't touch any `CLAUDE.md`).
 
 ### Go
 
@@ -185,6 +210,8 @@ zvk help
 | `ZVK_ROOT`           | Install root (defaults to `~/.zvk`)                  |
 | `ZVK_NO_MODIFY_PATH` | Skip writing to shell rc                                |
 | `ZVK_NO_MINISIGN`    | Skip minisign verification of Zig tarballs (not advised) |
+| `ZVK_NO_DOCS`        | Skip generating the Zig assistant reference docs        |
+| `ZVK_NO_CLAUDE_MD`   | Generate the docs but don't write/inject `CLAUDE.md`    |
 | `ZVK_VERSION`        | Module version the installer builds (`self-update` forwards it) |
 | `GOPROXY`            | Go module proxy used by the installer                   |
 

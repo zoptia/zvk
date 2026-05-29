@@ -50,6 +50,12 @@ type toolchain struct {
 	// listRemote prints available upstream versions for `list --remote`. nil
 	// means the toolchain doesn't support remote listing.
 	listRemote func(stdout io.Writer) error
+
+	// postInstall runs after a successful install (channel activated, bins
+	// linked, PATH set). It is for side artifacts — e.g. zig generates Claude
+	// Code reference docs here. Best-effort: it must not fail the install. nil
+	// means nothing extra runs.
+	postInstall func(root, version, channel string, stdout io.Writer)
 }
 
 // channelInfo names a channel and its human label for status output.
@@ -242,6 +248,9 @@ func toolchainInstall(tc *toolchain, channel, requestedRaw string, stdout io.Wri
 		return err
 	}
 	warnShadowedTools(tc, root, stdout)
+	if tc.postInstall != nil {
+		tc.postInstall(root, asset.version, channel, stdout)
+	}
 	fmt.Fprintf(stdout, "%s done\n", tag)
 	return nil
 }
