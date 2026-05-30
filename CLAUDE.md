@@ -97,15 +97,17 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
 - `cmd_{ssh,self}.go` — ssh key management; combined status, self-install, and
   `self-update` (downloads + re-runs the installer).
 - `cmd_app.go` — the `app` command: install assorted tools/apps that are NOT
-  version-managed toolchains (Homebrew, Claude Code, scoop). These have no
-  channels or version switching, so they live outside the toolchain driver as
+  version-managed toolchains (Homebrew, Claude Code, winget, scoop). These have
+  no channels or version switching, so they live outside the toolchain driver as
   platform-specific "recipes" (`appRecipes`): each knows how to detect itself on
   PATH and install itself by running its official script (`runShellScript` for
   POSIX `bash`, `runPowerShellCommand` for Windows `iwr|iex`; stdin passed
-  through for sudo prompts). `app list` shows only recipes whose `osSupport`
-  matches the current GOOS. This is deliberately not a package manager — no
-  version tracking, no bin symlinks; `uninstall` just prints the official steps.
-  Adding one = appending an `appRecipe`.
+  through for sudo prompts). A recipe with `install == nil` has no automated
+  installer (e.g. winget ships with Windows' App Installer) — it just prints
+  `installHint`. `app list` shows only recipes whose `osSupport` matches the
+  current GOOS. This is deliberately not a package manager — no version tracking,
+  no bin symlinks; `uninstall` just prints the official steps. Adding one =
+  appending an `appRecipe`.
 - `zigdoc.go` — the zig driver's `postInstall` hook (`writeZigDocs`). After a
   zig install it deterministically stages the raw material an assistant needs to
   target *that* build instead of stale memory: `REFERENCE.<channel>.md`

@@ -22,7 +22,9 @@ import (
 // bookkeeping, no bin symlinks. Each recipe is just its own bit of code.
 //
 // Recipes are platform-specific: `app list` shows only what's installable on
-// the current OS (macOS/Linux → homebrew, claude-code; Windows → scoop).
+// the current OS (macOS/Linux → homebrew, claude-code; Windows → winget, scoop).
+// A recipe whose `install` is nil has no automated installer (e.g. winget ships
+// with Windows) and just prints `installHint`.
 // Adding a tool is appending one `appRecipe`.
 // ============================================================================
 
@@ -41,10 +43,11 @@ script. This is not a package manager — zvk does no version tracking.
 type appRecipe struct {
 	name        string
 	description string
-	osSupport   []string // GOOS values this supports; empty = all
-	detectCmd   string   // command name to look for on PATH ("" = can't detect)
-	install     func(stdout io.Writer) error
-	uninstall   string // human instructions (app never deletes for you)
+	osSupport   []string                     // GOOS values this supports; empty = all
+	detectCmd   string                       // command name to look for on PATH ("" = can't detect)
+	install     func(stdout io.Writer) error // nil = no automated install; use installHint
+	installHint string                       // how to install manually, shown when install is nil
+	uninstall   string                       // human instructions (app never deletes for you)
 	docURL      string
 }
 
@@ -75,6 +78,21 @@ var appRecipes = []*appRecipe{
 		},
 		uninstall: "remove the `claude` binary the installer placed (typically ~/.local/bin/claude); see the docs",
 		docURL:    "https://docs.claude.com/en/docs/claude-code",
+	},
+	{
+		name:        "winget",
+		description: "Windows Package Manager (winget)",
+		osSupport:   []string{"windows"},
+		detectCmd:   "winget",
+		// winget ships as the App Installer AppX package — there's no official
+		// install script, so detect it and point at the Store if it's missing.
+		install: nil,
+		installHint: "winget ships with the 'App Installer' package, preinstalled on current\n" +
+			"  Windows 10/11. If it's missing, install 'App Installer' from the Microsoft\n" +
+			"  Store (https://apps.microsoft.com/detail/9NBLGGH4NNS1) or grab a release from\n" +
+			"  https://github.com/microsoft/winget-cli/releases",
+		uninstall: "winget is a Windows system component; remove 'App Installer' from Settings > Apps if needed",
+		docURL:    "https://learn.microsoft.com/windows/package-manager/",
 	},
 	{
 		name:        "scoop",
@@ -180,6 +198,13 @@ func runAppInstall(name string, stdout io.Writer) error {
 	}
 	if p, ok := a.detect(); ok {
 		fmt.Fprintf(stdout, "[zvk app] %s already installed at %s\n", name, p)
+		return nil
+	}
+	if a.install == nil {
+		// No automated installer (e.g. winget): print the manual steps.
+		fmt.Fprintf(stdout, "[zvk app] %s can't be installed automatically:\n", name)
+		fmt.Fprintf(stdout, "  %s\n", a.installHint)
+		fmt.Fprintf(stdout, "  docs: %s\n", a.docURL)
 		return nil
 	}
 	fmt.Fprintf(stdout, "[zvk app] installing %s (%s)\n", name, a.docURL)
