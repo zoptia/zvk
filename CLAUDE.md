@@ -108,6 +108,13 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   current GOOS. This is deliberately not a package manager — no version tracking,
   no bin symlinks; `uninstall` just prints the official steps. Adding one =
   appending an `appRecipe`.
+- `cmd_vminit.go` — `app vminit`: unlike the install recipes, this reconfigures
+  the *local* host into a low-footprint VM node (hostname → `vm-<primary-ipv4>`,
+  no sleep, no file indexing, no GUI on Linux / reduced animations on macOS).
+  Steps are platform-specific (`vmSteps` per GOOS); root-requiring commands are
+  wrapped in `sudo` (stdin passed through). `primaryIPv4` uses a UDP `net.Dial`
+  to read the default-route interface IP cross-platform (no `ip`/`ifconfig`
+  parsing). `--dry-run` prints commands without running them.
 - `zigdoc.go` — the zig driver's `postInstall` hook (`writeZigDocs`). After a
   zig install it deterministically stages the raw material an assistant needs to
   target *that* build instead of stale memory: `REFERENCE.<channel>.md`
