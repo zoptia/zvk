@@ -13,7 +13,7 @@ Usage:
   zvk go   <cmd> [args...]      Go toolchain management
   zvk node <cmd> [args...]      Node.js toolchain management
   zvk ssh  <cmd> [args...]      SSH key management
-  zvk app  <cmd> [args...]      Install assorted tools/apps (homebrew, claude-code, scoop)
+  zvk app  <cmd> [args...]      Install assorted tools/apps (homebrew, claude-code, winget, scoop)
 
   zvk status [--json]           Combined status (zig + go)
   zvk self-install              Copy zvk to <root>/bin/ + setup PATH

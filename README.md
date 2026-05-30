@@ -89,7 +89,7 @@ zvk node which
 zvk node status [--json]
 
 zvk app list
-zvk app install <homebrew|claude-code|scoop>
+zvk app install <homebrew|claude-code|winget|scoop>
 zvk app uninstall <name>
 
 zvk ssh keygen [--name N] [--comment C] [--force]
@@ -206,10 +206,11 @@ scripts** (not the tarball pipeline). It is deliberately *not* a package
 manager — no version tracking, no bookkeeping.
 
 - `zvk app list` — show the apps installable **on this platform** and whether
-  each is on PATH (macOS/Linux → homebrew, claude-code; Windows → scoop).
+  each is on PATH (macOS/Linux → homebrew, claude-code; Windows → winget, scoop).
 - `zvk app install <name>` — run the tool's official installer (Homebrew's
   `install.sh` non-interactively; Claude Code's `install.sh`; scoop's
-  `iwr | iex`). No-op if already installed.
+  `iwr | iex`). No-op if already installed. Some apps have no install script
+  (winget ships with Windows' App Installer) — those just print where to get it.
 - `zvk app uninstall <name>` — prints the official removal steps; zvk never
   deletes a system tool it didn't lay out itself.
 
