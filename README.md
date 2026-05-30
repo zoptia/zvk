@@ -216,6 +216,21 @@ manager — no version tracking, no bookkeeping.
 
 Adding an app is one recipe in `cmd_app.go`.
 
+#### `zvk app vminit`
+
+Configures **this host** as a low-footprint VM node (not an install — it
+reconfigures the local machine). Works on Linux and macOS:
+
+- hostname → `vm-<primary-ipv4>` (e.g. `vm-192-168-1-50`; the primary IPv4 is
+  found via the default-route interface, dots become dashes);
+- disable sleep/suspend/hibernate;
+- disable file indexing (Spotlight on macOS, mlocate/plocate on Linux);
+- disable the graphical UI (Linux `multi-user.target`) / reduce animations (macOS).
+
+Changes are system-level and run via `sudo` (password prompt passed through).
+`zvk app vminit --dry-run` prints the exact commands without running them — run
+that first to see what will change.
+
 ### SSH
 
 1. `keygen` calls `crypto/ed25519.GenerateKey` to produce a keypair.

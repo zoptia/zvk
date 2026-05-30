@@ -33,6 +33,7 @@ const appUsage = `Usage:
   zvk app install <name>          Install an app via its official script
   zvk app uninstall <name>        Print how to uninstall an app
   zvk app status                  Alias for list
+  zvk app vminit [--dry-run]      Configure this host as a low-footprint VM node
 
 Apps are assorted tools (package managers, runtimes, apps) that aren't
 version-managed the way zig/go/node are. Installation runs each tool's official
@@ -159,6 +160,8 @@ func runApp(args []string, stdout io.Writer) error {
 			return usageErrorf("usage: zvk app uninstall <name>")
 		}
 		return runAppUninstall(rest[0], stdout)
+	case "vminit":
+		return runAppVminit(rest, stdout)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, appUsage)
 		return nil
