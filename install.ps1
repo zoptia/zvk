@@ -54,6 +54,21 @@ if (-not (Test-Path $goexe)) {
 # re-downloading a toolchain just to satisfy go.mod — the managed one suffices.
 $bin = Join-Path $Root 'bin'
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
+
+# Drop only this module's download cache before installing. Without this, a stale
+# cached @latest resolution (or an already-downloaded version) can make
+# `go install ...@latest` a silent no-op right after a new tag is pushed: Go
+# reuses the cache instead of re-querying the proxy, so the rebuild lands on the
+# old version while still reporting success. Scoped to this module's @v subtree
+# so other modules' caches stay intact. Cache files are read-only.
+$modcache  = (& $goexe env GOMODCACHE).Trim()
+$modverDir = Join-Path $modcache "cache\download\$Module\@v"
+if ($modcache -and (Test-Path $modverDir)) {
+    Write-Host "[zvk] refreshing module cache for $Module"
+    Get-ChildItem -Recurse -Force $modverDir | ForEach-Object { $_.Attributes = 'Normal' }
+    Remove-Item -Recurse -Force $modverDir -ErrorAction SilentlyContinue
+}
+
 Write-Host "[zvk] go install $Module@$Version"
 $env:GOTOOLCHAIN = 'local'
 $env:GOBIN = $bin

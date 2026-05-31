@@ -62,6 +62,21 @@ GO="$godir/bin/go"
 # Build & install zvk into <root>/bin via GOBIN. GOTOOLCHAIN=local stops Go from
 # re-downloading a toolchain just to satisfy go.mod — the managed one suffices.
 mkdir -p "$ROOT/bin"
+
+# Drop only this module's download cache before installing. Without this, a stale
+# cached @latest resolution (or an already-downloaded version) can make
+# `go install ...@latest` a silent no-op right after a new tag is pushed: Go
+# reuses the cache instead of re-querying the proxy, so the rebuild lands on the
+# old version while still reporting success. We scope the wipe to MODULE's @v
+# subtree so other modules' caches (incl. the managed Go's build deps) are
+# untouched. Cache files are read-only, hence chmod before rm.
+modcache=$("$GO" env GOMODCACHE)
+if [ -n "$modcache" ] && [ -d "$modcache/cache/download/$MODULE/@v" ]; then
+    echo "[zvk] refreshing module cache for $MODULE"
+    chmod -R u+w "$modcache/cache/download/$MODULE/@v" 2>/dev/null || true
+    rm -rf "$modcache/cache/download/$MODULE/@v"
+fi
+
 echo "[zvk] go install ${MODULE}@${VERSION}"
 GOTOOLCHAIN=local GOBIN="$ROOT/bin" "$GO" install "${MODULE}@${VERSION}"
 
