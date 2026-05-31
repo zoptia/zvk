@@ -188,6 +188,11 @@ func runAppList(stdout io.Writer) error {
 	if !any {
 		fmt.Fprintln(stdout, "  (none)")
 	}
+	// vminit isn't an installable recipe (it reconfigures THIS host rather than
+	// installing a tool), so it's not in appRecipes — surface it here so `zvk
+	// app` still advertises it.
+	fmt.Fprintf(stdout, "\nHost setup (not an installable app):\n")
+	fmt.Fprintf(stdout, "  %-12s %-30s %s\n", "vminit", "Configure this host as a VM node", "run `zvk app vminit`")
 	return nil
 }
 
