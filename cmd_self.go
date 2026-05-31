@@ -160,5 +160,26 @@ func runSelfUpdate(args []string, stdout io.Writer) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("installer failed: %w", err)
 	}
+
+	// Echo the version actually installed. The running binary still reports the
+	// OLD zvkVersion (it's baked in at build time), so query the freshly-built
+	// binary instead. This makes a no-op upgrade visible — e.g. when GOPROXY
+	// serves a cached @latest and the rebuild lands on the same version rather
+	// than silently looking like it succeeded.
+	root, rerr := defaultRoot()
+	if rerr == nil {
+		installed := filepath.Join(binDir(root), zvkBinaryName())
+		if out, verr := exec.Command(installed, "version").Output(); verr == nil {
+			now := strings.TrimSpace(strings.TrimPrefix(string(out), "zvk "))
+			switch {
+			case version != "" && now != version:
+				fmt.Fprintf(stdout, "[zvk] installed %s (requested %s)\n", now, version)
+			case now == zvkVersion:
+				fmt.Fprintf(stdout, "[zvk] version unchanged: %s (already the newest, or GOPROXY served a cached @latest)\n", now)
+			default:
+				fmt.Fprintf(stdout, "[zvk] upgraded: %s -> %s\n", zvkVersion, now)
+			}
+		}
+	}
 	return nil
 }
