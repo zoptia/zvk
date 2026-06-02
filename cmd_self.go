@@ -75,6 +75,10 @@ func runSelfInstall(stdout io.Writer) error {
 	if err := setupPath(bd, stdout); err != nil {
 		return err
 	}
+
+	// Teach the assistant about `zvk fetch` (best-effort; never fails install).
+	writeFetchDoc(root, stdout)
+
 	fmt.Fprintln(stdout, "[zvk] done")
 	return nil
 }

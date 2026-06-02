@@ -15,6 +15,8 @@ Usage:
   zvk ssh  <cmd> [args...]      SSH key management
   zvk app  <cmd> [args...]      Install assorted tools/apps (homebrew, claude-code, winget, scoop)
 
+  zvk fetch [opts] <url>        HTTP request impersonating the latest Chrome's TLS fingerprint
+
   zvk status [--json]           Combined status (zig + go)
   zvk self-install              Copy zvk to <root>/bin/ + setup PATH
   zvk self-update [--dry-run] [--version=<v>]
@@ -49,6 +51,8 @@ func main() {
 		err = runSSH(args, stdout)
 	case "app":
 		err = runApp(args, stdout)
+	case "fetch":
+		err = runFetch(args, stdout)
 	case "status", "info":
 		err = runCombinedStatus(args, stdout)
 	case "self-install":
