@@ -13,7 +13,7 @@ import (
 )
 
 // zvkVersion is the user-facing release version; bumped per GitHub Release.
-const zvkVersion = "0.3.2"
+const zvkVersion = "0.4.0"
 
 // usageError signals a CLI misuse (unknown subcommand, missing arg, bad flag).
 // `main` recognises it and exits with status 2; all other errors exit with 1.
