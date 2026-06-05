@@ -115,13 +115,39 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   wrapped in `sudo` (stdin passed through). `primaryIPv4` uses a UDP `net.Dial`
   to read the default-route interface IP cross-platform (no `ip`/`ifconfig`
   parsing). `--dry-run` prints commands without running them.
+- `cmd_fetch.go` — the `fetch` command: a single-shot HTTP client built on
+  `github.com/bogdanfinn/tls-client` that impersonates the latest Chrome's TLS +
+  HTTP/2 fingerprint (ClientHello/JA3, HTTP/2 SETTINGS, header order), so
+  anti-bot edges (Cloudflare, Akamai) return real content instead of a
+  challenge. Default profile is the upstream-tracked "latest Chrome"
+  (`profiles.DefaultClientProfile`); `--profile` selects any `MappedTLSClients`
+  key. Sends a realistic Chrome header set; gzip/brotli are auto-decompressed so
+  the body is readable text. Linked into the toolchain via `bogdanfinn/fhttp`
+  (a net/http fork), not stdlib `net/http`. Companion `fetchdoc.go` writes its
+  `<root>/fetch/CLAUDE.md` pointer.
+- `cmd_serve.go` — the `serve` command: a stdlib `net/http` static file server
+  to share a generated report over HTTP. Binds `0.0.0.0` by default (prints a
+  localhost + a LAN URL via `primaryIPv4`); `--local` restricts to loopback.
+  Single-file mode (`path` is a file) serves ONLY that file at every path, so
+  siblings stay private; directory mode uses `FileServer`. `--once` exits after
+  the first download. It blocks, so an assistant runs it in the background and
+  reads the printed URL. Also writes its own `<root>/serve/CLAUDE.md` pointer.
+- `claudemd.go` — aggregates each feature's `<root>/<feature>/CLAUDE.md` into a
+  single `<root>/CLAUDE.md` and injects exactly ONE `@import` into the user's
+  global `~/.claude/CLAUDE.md`, migrating away older per-feature imports. Every
+  feature doc writer (`zigdoc`, `fetchdoc`, `cmd_serve`) calls
+  `refreshZvkClaudeMd` after writing its pointer. Gated by `ZVK_NO_DOCS` /
+  `ZVK_NO_CLAUDE_MD`.
 - `zigdoc.go` — the zig driver's `postInstall` hook (`writeZigDocs`). After a
   zig install it deterministically stages the raw material an assistant needs to
   target *that* build instead of stale memory: `REFERENCE.<channel>.md`
   (version-pinned pointers + grep topic map), `STD_INDEX.md` (column-0 `pub`
   decls per top-level `lib/std` file — not the ~25k full tree), a local
   `release-notes.html` snapshot, an `ADAPTATION.prompt.md`, and `zig/CLAUDE.md`
-  (idempotently `@import`ed into `~/.claude/CLAUDE.md`). zvk never calls an LLM —
+  (surfaced to the assistant via the aggregate in `claudemd.go`). A dev/nightly
+  build has no published `release-notes.html` (the URL 404s), so it skips that
+  fetch and points the REFERENCE/ADAPTATION at the master std commit log
+  instead. zvk never calls an LLM —
   it stages inputs + a prompt; the assistant writes `ADAPTATION.md` in-session.
   All best-effort: failures print advisories, never failing the install. Gated
   by `ZVK_NO_DOCS` / `ZVK_NO_CLAUDE_MD`.
@@ -166,8 +192,11 @@ download+extract pipeline).
 
 ## Conventions
 
-- **Minimal dependencies.** Only `golang.org/x/crypto` (ssh + blake2b) and
-  `github.com/ulikunitz/xz`. Do not introduce more without a strong reason.
+- **Minimal dependencies.** Core toolchain logic uses only `golang.org/x/crypto`
+  (ssh + blake2b) and `github.com/ulikunitz/xz`. The `fetch` command adds
+  `github.com/bogdanfinn/tls-client` (+ its `fhttp`/`utls` forks) — the one
+  deliberate exception, since real browser TLS fingerprinting can't be done with
+  stdlib `crypto/tls`. Do not introduce more without a comparably strong reason.
 - **No subprocess for decompression.** All archive handling is in-process. The
   `exec.Cmd` users are `ssh-add`, `pbcopy`/`wl-copy`/`xclip` (clipboard), the
   installer script invoked by `self-update` (`sh`/`powershell`), and the official

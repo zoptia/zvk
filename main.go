@@ -16,6 +16,7 @@ Usage:
   zvk app  <cmd> [args...]      Install assorted tools/apps (homebrew, claude-code, winget, scoop)
 
   zvk fetch [opts] <url>        HTTP request impersonating the latest Chrome's TLS fingerprint
+  zvk serve [opts] [path]       Share a file/dir over HTTP (e.g. open a generated report)
 
   zvk status [--json]           Combined status (zig + go)
   zvk self-install              Copy zvk to <root>/bin/ + setup PATH
@@ -53,6 +54,8 @@ func main() {
 		err = runApp(args, stdout)
 	case "fetch":
 		err = runFetch(args, stdout)
+	case "serve":
+		err = runServe(args, stdout)
 	case "status", "info":
 		err = runCombinedStatus(args, stdout)
 	case "self-install":
