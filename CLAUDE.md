@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Language conventions
 
 - All project documentation, code, comments, identifiers, and commit messages: **English**.
-- Replies to the user in conversation: **Chinese**.
+
 
 ## Commands
 
