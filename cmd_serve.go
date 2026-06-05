@@ -262,6 +262,7 @@ func writeServeDoc(root string, stdout io.Writer) {
 		return
 	}
 	refreshZvkClaudeMd(absRoot, stdout)
+	fmt.Fprintf(stdout, "[zvk serve] Claude Code awareness written to %s\n", claudePath)
 }
 
 func serveClaudeMd() string {
