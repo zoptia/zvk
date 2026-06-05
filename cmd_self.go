@@ -76,8 +76,10 @@ func runSelfInstall(stdout io.Writer) error {
 		return err
 	}
 
-	// Teach the assistant about `zvk fetch` (best-effort; never fails install).
+	// Teach the assistant about the non-toolchain features (best-effort; never
+	// fails install). Each writes its doc and refreshes the aggregate CLAUDE.md.
 	writeFetchDoc(root, stdout)
+	writeServeDoc(root, stdout)
 
 	fmt.Fprintln(stdout, "[zvk] done")
 	return nil

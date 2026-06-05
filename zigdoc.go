@@ -89,15 +89,14 @@ func writeZigDocs(root, version, channel string, stdout io.Writer) {
 		zigDocNote(stdout, "could not write %s: %v", filepath.Base(refPath), err)
 	}
 
-	// CLAUDE.md + global @import — make the reference discoverable to the assistant.
-	if os.Getenv("ZVK_NO_CLAUDE_MD") == "" {
-		claudePath := filepath.Join(zigRoot, "CLAUDE.md")
-		if err := writeFileAtomic(claudePath, []byte(zigClaudeMd(absRoot)), 0o644); err != nil {
-			zigDocNote(stdout, "could not write zig CLAUDE.md: %v", err)
-		} else if err := injectGlobalImport(claudePath); err != nil {
-			zigDocNote(stdout, "could not link CLAUDE.md into ~/.claude/CLAUDE.md: %v", err)
-		}
+	// CLAUDE.md — write the zig pointer doc, then rebuild the aggregate the
+	// assistant loads (single global @import; see claudemd.go). ZVK_NO_CLAUDE_MD
+	// is honoured inside refreshZvkClaudeMd.
+	claudePath := filepath.Join(zigRoot, "CLAUDE.md")
+	if err := writeFileAtomic(claudePath, []byte(zigClaudeMd(absRoot)), 0o644); err != nil {
+		zigDocNote(stdout, "could not write zig CLAUDE.md: %v", err)
 	}
+	refreshZvkClaudeMd(absRoot, stdout)
 
 	fmt.Fprintf(stdout, "[zvk zig] Claude Code reference docs written under %s\n", zigRoot)
 	fmt.Fprintf(stdout, "[zvk zig] to generate version-adaptation notes, have Claude run the prompt in:\n        %s\n", promptPath)
@@ -384,32 +383,5 @@ func zigClaudeMd(absRoot string) string {
 	return b.String()
 }
 
-// injectGlobalImport idempotently appends `@<claudePath>` to ~/.claude/CLAUDE.md
-// so the assistant auto-loads the zig pointer. Mirrors pathenv.go's approach:
-// search for the line before appending to avoid duplicate writes.
-func injectGlobalImport(claudePath string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	globalPath := filepath.Join(home, ".claude", "CLAUDE.md")
-	importLine := "@" + claudePath
-
-	existing, err := os.ReadFile(globalPath)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if strings.Contains(string(existing), importLine) {
-		return nil
-	}
-	var buf []byte
-	buf = append(buf, existing...)
-	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
-		buf = append(buf, '\n')
-	}
-	buf = append(buf, []byte("\n# Added by zvk\n"+importLine+"\n")...)
-	if err := os.MkdirAll(filepath.Dir(globalPath), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(globalPath, buf, 0o644)
-}
+// The global @import is now owned by claudemd.go's injectAggregateImport, which
+// collapses every feature's pointer into one line in ~/.claude/CLAUDE.md.

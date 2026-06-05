@@ -35,12 +35,7 @@ func writeFetchDoc(root string, stdout io.Writer) {
 		fmt.Fprintf(stdout, "[zvk fetch] note: could not write CLAUDE.md: %v\n", err)
 		return
 	}
-	if os.Getenv("ZVK_NO_CLAUDE_MD") == "" {
-		if err := injectGlobalImport(claudePath); err != nil {
-			fmt.Fprintf(stdout, "[zvk fetch] note: could not link CLAUDE.md into ~/.claude/CLAUDE.md: %v\n", err)
-			return
-		}
-	}
+	refreshZvkClaudeMd(absRoot, stdout)
 	fmt.Fprintf(stdout, "[zvk fetch] Claude Code awareness written to %s\n", claudePath)
 }
 
