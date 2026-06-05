@@ -6,6 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - All project documentation, code, comments, identifiers, and commit messages: **English**.
 
+
 ## Commands
 
 ```sh
