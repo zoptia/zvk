@@ -130,8 +130,15 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   localhost + a LAN URL via `primaryIPv4`); `--local` restricts to loopback.
   Single-file mode (`path` is a file) serves ONLY that file at every path, so
   siblings stay private; directory mode uses `FileServer`. `--once` exits after
-  the first download. It blocks, so an assistant runs it in the background and
-  reads the printed URL. Also writes its own `<root>/serve/CLAUDE.md` pointer.
+  the first download. The reverse direction is `-r, --receive <dest>`
+  (`doReceive`): instead of serving, it streams each POST/PUT body to disk —
+  `dest` as a single file (overwritten per request), or, when `dest` is/ends a
+  directory, one atomic file per request named from the request URL. The name is
+  reduced to a single path component via `path.Base` + a `.`/`..`/separator
+  reject (`receiveFilename`), so a client cannot write outside `dest`; bodies are
+  streamed to a tmp sibling and renamed (`saveBody`). It blocks, so an assistant
+  runs it in the background and reads the printed URL. Also writes its own
+  `<root>/serve/CLAUDE.md` pointer.
 - `claudemd.go` — aggregates each feature's `<root>/<feature>/CLAUDE.md` into a
   single `<root>/CLAUDE.md` and injects exactly ONE `@import` into the user's
   global `~/.claude/CLAUDE.md`, migrating away older per-feature imports. Every
