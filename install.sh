@@ -48,14 +48,34 @@ esac
 # reported afterwards by `zvk go install` — zvk never touches the system copy.
 gover=$(fetch "https://go.dev/VERSION?m=text" | head -n1)
 godir="$ROOT/go/versions/$gover"
-if [ ! -x "$godir/bin/go" ]; then
-    echo "[zvk] installing managed Go $gover into $godir"
-    rm -rf "$godir"
-    mkdir -p "$godir"
-    # Go archives wrap everything in a top-level go/ — strip it.
-    fetch "https://go.dev/dl/${gover}.${goos}-${goarch}.tar.gz" | tar -xzf - -C "$godir" --strip-components=1
-else
+
+# A managed Go is only trusted if the toolchain is actually complete. The
+# bootstrap download below is a streamed, unverified curl|tar — if a prior run's
+# stream was truncated it leaves bin/go present (it precedes src/ in the archive)
+# but src/ incomplete, which then fails every build with "package ... is not in
+# std". So validate src/ too, not just that bin/go is executable.
+go_ok() {
+    [ -x "$1/bin/go" ] && [ -d "$1/src/runtime" ] && "$1/bin/go" version >/dev/null 2>&1
+}
+
+if go_ok "$godir"; then
     echo "[zvk] managed Go $gover already present"
+else
+    echo "[zvk] installing managed Go $gover into $godir"
+    # Extract into a sibling tmp dir and rename into place only once complete, so
+    # a truncated download never leaves a half-written $godir that the check
+    # above would later mistake for a good install (rename is atomic on the same
+    # filesystem; both paths live under $ROOT/go/versions).
+    rm -rf "$godir" "$godir.tmp"
+    mkdir -p "$godir.tmp"
+    # Go archives wrap everything in a top-level go/ — strip it.
+    fetch "https://go.dev/dl/${gover}.${goos}-${goarch}.tar.gz" | tar -xzf - -C "$godir.tmp" --strip-components=1
+    if ! go_ok "$godir.tmp"; then
+        echo "[zvk] managed Go download looks incomplete (truncated stream?); aborting" >&2
+        rm -rf "$godir.tmp"
+        exit 1
+    fi
+    mv "$godir.tmp" "$godir"
 fi
 GO="$godir/bin/go"
 
