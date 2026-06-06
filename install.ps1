@@ -31,24 +31,46 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 # reported afterwards by `zvk go install` — zvk never touches the system copy.
 $gover = ((Invoke-RestMethod 'https://go.dev/VERSION?m=text') -split "`n")[0].Trim()
 $godir = Join-Path $Root "go\versions\$gover"
-$goexe = Join-Path $godir 'bin\go.exe'
-if (-not (Test-Path $goexe)) {
+
+# A managed Go is only trusted if the toolchain is actually complete. If a prior
+# run's download/extract was interrupted it can leave bin\go.exe present (it
+# precedes src\ in the archive) but src\ incomplete, which then fails every build
+# with "package ... is not in std". So validate src\ too, not just that go.exe
+# exists.
+function Test-GoOk($dir) {
+    $exe = Join-Path $dir 'bin\go.exe'
+    if (-not (Test-Path $exe)) { return $false }
+    if (-not (Test-Path (Join-Path $dir 'src\runtime'))) { return $false }
+    try { & $exe version *> $null } catch { return $false }
+    return $LASTEXITCODE -eq 0
+}
+
+if (Test-GoOk $godir) {
+    Write-Host "[zvk] managed Go $gover already present"
+} else {
     Write-Host "[zvk] installing managed Go $gover into $godir"
-    if (Test-Path $godir) { Remove-Item -Recurse -Force $godir }
-    New-Item -ItemType Directory -Force -Path $godir | Out-Null
+    # Extract into a sibling dir and rename into place only once complete, so a
+    # truncated download/extract never leaves a half-written $godir that the
+    # check above would later mistake for a good install (the final Move-Item is
+    # an atomic rename — $extract and $godir share the same volume under $Root).
+    $extract = "$godir.extract"
+    if (Test-Path $godir)   { Remove-Item -Recurse -Force $godir }
+    if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }
     $zip = Join-Path $env:TEMP "$gover.windows-$arch.zip"
     Invoke-WebRequest "https://go.dev/dl/$gover.windows-$arch.zip" -OutFile $zip
-    # Archives wrap everything in a top-level go\ — extract to a temp dir, then
-    # lift its contents up one level into the version dir.
-    $tmp = Join-Path $env:TEMP "zvk-go-$gover"
-    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
-    Expand-Archive -Path $zip -DestinationPath $tmp -Force
-    Move-Item (Join-Path $tmp 'go\*') $godir
-    Remove-Item -Recurse -Force $tmp
+    # Archives wrap everything in a top-level go\ — extract, validate, then lift
+    # that go\ dir into place.
+    Expand-Archive -Path $zip -DestinationPath $extract -Force
     Remove-Item $zip
-} else {
-    Write-Host "[zvk] managed Go $gover already present"
+    $staged = Join-Path $extract 'go'
+    if (-not (Test-GoOk $staged)) {
+        Remove-Item -Recurse -Force $extract
+        throw "[zvk] managed Go download looks incomplete (truncated stream?); aborting"
+    }
+    Move-Item $staged $godir
+    Remove-Item -Recurse -Force $extract
 }
+$goexe = Join-Path $godir 'bin\go.exe'
 
 # Build & install zvk into <root>\bin via GOBIN. GOTOOLCHAIN=local stops Go from
 # re-downloading a toolchain just to satisfy go.mod — the managed one suffices.
