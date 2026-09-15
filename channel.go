@@ -35,6 +35,9 @@ func (d toolDirs) setActive(root, channel, version string) error {
 // POSIX uses a directory symlink under `channelsDir/<channel>`; Windows uses
 // `channelsDir/<channel>.txt` to avoid needing the symlink privilege.
 func readActiveVersion(channelsDir, channel string) (string, error) {
+	if err := validateName("channel", channel); err != nil {
+		return "", err
+	}
 	if isWindows() {
 		path := filepath.Join(channelsDir, channel+".txt")
 		data, err := os.ReadFile(path)
@@ -44,7 +47,11 @@ func readActiveVersion(channelsDir, channel string) (string, error) {
 			}
 			return "", err
 		}
-		return trimNewlines(string(data)), nil
+		version := trimNewlines(string(data))
+		if err := validateName("version", version); err != nil {
+			return "", err
+		}
+		return version, nil
 	}
 	link := filepath.Join(channelsDir, channel)
 	target, err := os.Readlink(link)
@@ -54,18 +61,31 @@ func readActiveVersion(channelsDir, channel string) (string, error) {
 		}
 		return "", err
 	}
-	return filepath.Base(target), nil
+	version := filepath.Base(target)
+	if target != filepath.Join("..", "versions", version) {
+		return "", fmt.Errorf("invalid channel target: %q", target)
+	}
+	if err := validateName("version", version); err != nil {
+		return "", err
+	}
+	return version, nil
 }
 
 // setActiveVersion records `version` as the active version for `channel`.
 // Callers must ensure `versions/<version>/` already exists alongside.
 func setActiveVersion(channelsDir, channel, version string) error {
+	if err := validateName("channel", channel); err != nil {
+		return err
+	}
+	if err := validateName("version", version); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(channelsDir, 0o755); err != nil {
 		return err
 	}
 	if isWindows() {
 		path := filepath.Join(channelsDir, channel+".txt")
-		return os.WriteFile(path, []byte(version), 0o644)
+		return writeFileAtomic(path, []byte(version), 0o644)
 	}
 	link := filepath.Join(channelsDir, channel)
 	// `channels/<ch>` -> `../versions/<ver>` (a sibling under the same tool root).
@@ -78,6 +98,5 @@ func setActiveVersion(channelsDir, channel, version string) error {
 // symlinks, so `bin/<cmd>.cmd` redirects to the channel's actual binary.
 func writeWindowsShim(linkPath, exePath string) error {
 	wrapper := fmt.Sprintf("@\"%s\" %%*\r\n", exePath)
-	_ = os.Remove(linkPath)
-	return os.WriteFile(linkPath, []byte(wrapper), 0o644)
+	return writeFileAtomic(linkPath, []byte(wrapper), 0o644)
 }

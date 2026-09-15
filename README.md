@@ -241,6 +241,44 @@ that first to see what will change.
 4. `add` invokes `ssh-add`; `copy` invokes `pbcopy` on macOS, `wl-copy` or
    `xclip` on Linux.
 
+## Reliability and file receiving
+
+Toolchain install/use/uninstall operations use a per-toolchain OS lock. A second
+concurrent mutation fails with an actionable error; locks are released when the
+process exits, including crashes. Downloads are extracted into private staging
+directories and required files are checked before publishing a version. Failed
+extraction leaves existing installations and channel mappings unchanged. Channel
+and command-entry updates are preflighted and rolled back on write errors.
+Windows updates multiple shim files, so the group is not crash-atomic.
+
+Archive operations are confined to the extraction directory, including symlink
+traversal. Version and SSH key names must be portable single path components.
+
+```sh
+zvk serve --receive ./inbox/ --once
+zvk serve --receive result.bin --max-bytes 104857600
+```
+
+Directory uploads preserve existing files and select a unique name on collision,
+including concurrent requests. Publishing uses hard links and requires a filesystem
+that supports them. Single-file uploads intentionally replace the destination only
+after the complete body has been received. Interrupted and oversized uploads leave
+no partial destination. The upload limit defaults to 1 GiB; `--max-bytes 0` disables
+it. Request reads and response writes have a five-minute timeout. In receive mode,
+`--once` admits one upload at a time, permits retry after failure, and exits after
+the first successful save and response shutdown. Other methods return HTTP 405.
+
+### Checks
+
+```sh
+go test -race ./...
+go vet ./...
+go build -o zvk .
+```
+
+Tests use temporary directories and synthetic archives, without installing real
+toolchains or changing shell configuration.
+
 ## Environment variables
 
 | Variable                | Effect                                                  |

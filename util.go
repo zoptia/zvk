@@ -139,12 +139,16 @@ func replaceSymlink(target, link string) error {
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		return err
 	}
-	// RemoveAll handles both file/symlink and the rare case where `link` is a
-	// non-empty directory left behind by an earlier broken install.
-	if err := os.RemoveAll(link); err != nil {
+	tmpDir, err := os.MkdirTemp(filepath.Dir(link), ".zvk-link-*")
+	if err != nil {
 		return err
 	}
-	return os.Symlink(target, link)
+	defer os.RemoveAll(tmpDir)
+	tmp := filepath.Join(tmpDir, "link")
+	if err := os.Symlink(target, tmp); err != nil {
+		return err
+	}
+	return os.Rename(tmp, link)
 }
 
 // writeFileAtomic writes `data` to `path` via a temp file + rename. Permissions
@@ -216,4 +220,23 @@ func printInstalledVersions(w io.Writer, versions []string, withCount bool) {
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// validateName accepts a portable single path component, never a path or device.
+func validateName(kind, name string) error {
+	if name == "" || name == "." || name == ".." || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
+		return usageErrorf("invalid %s: %q", kind, name)
+	}
+	for _, c := range name {
+		if c < 32 || c == 127 || strings.ContainsRune(`/\:*?"<>|`, c) {
+			return usageErrorf("invalid %s: %q", kind, name)
+		}
+	}
+	base := strings.ToUpper(strings.TrimRight(strings.SplitN(name, ".", 2)[0], " "))
+	device := []rune(base)
+	if base == "CON" || base == "PRN" || base == "AUX" || base == "NUL" ||
+		(len(device) == 4 && (strings.HasPrefix(base, "COM") || strings.HasPrefix(base, "LPT")) && strings.ContainsRune("123456789¹²³", device[3])) {
+		return usageErrorf("invalid %s: %q", kind, name)
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -9,8 +10,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ============================================================================
@@ -51,7 +54,8 @@ Options:
   -r, --receive <dest>  Receive mode: save each POST/PUT body to dest instead of
                         serving files. If dest is (or ends with) a directory,
                         each request lands in its own file named from the URL.
-      --once          Exit after the first file is served/received
+      --max-bytes <n> Maximum upload bytes (default 1073741824; 0 = unlimited)
+      --once          Exit after the first successful file transfer
   -q, --quiet         Don't log each request
   -h, --help          Show this help
 
@@ -68,13 +72,14 @@ Examples:
 `
 
 type serveOptions struct {
-	path    string
-	port    int
-	local   bool
-	bind    string
-	once    bool
-	quiet   bool
-	receive string // destination for receive mode; "" means serve mode
+	path     string
+	port     int
+	local    bool
+	bind     string
+	once     bool
+	quiet    bool
+	maxBytes int64
+	receive  string // destination for receive mode; "" means serve mode
 }
 
 func runServe(args []string, stdout io.Writer) error {
@@ -91,6 +96,7 @@ func runServe(args []string, stdout io.Writer) error {
 
 func parseServeArgs(args []string) (opts serveOptions, showHelp bool, err error) {
 	opts.port = 8000
+	opts.maxBytes = 1 << 30
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		name, inlineVal, hasInline := a, "", false
@@ -127,6 +133,17 @@ func parseServeArgs(args []string) (opts serveOptions, showHelp bool, err error)
 			}
 		case "-r", "--receive":
 			if opts.receive, err = needValue(); err != nil {
+				return
+			}
+		case "--max-bytes":
+			v, e := needValue()
+			if e != nil {
+				err = e
+				return
+			}
+			opts.maxBytes, e = strconv.ParseInt(v, 10, 64)
+			if e != nil || opts.maxBytes < 0 {
+				err = usageErrorf("serve: --max-bytes must be a non-negative integer")
 				return
 			}
 		case "--local":
@@ -199,16 +216,20 @@ func doServe(opts serveOptions, stdout io.Writer) error {
 		handler = http.FileServer(http.Dir(absDir))
 	}
 
-	srv := &http.Server{}
-	var stopOnce sync.Once
-	stop := func() { stopOnce.Do(func() { go srv.Shutdown(context.Background()) }) }
+	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 5 * time.Minute, WriteTimeout: 5 * time.Minute, IdleTimeout: time.Minute}
+	stop, stopped := serverStop(srv)
 
 	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !opts.quiet {
 			fmt.Fprintf(os.Stderr, "[zvk serve] %s %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
 		}
-		handler.ServeHTTP(w, r)
-		if opts.once && r.Method == http.MethodGet {
+		if !opts.once {
+			handler.ServeHTTP(w, r)
+			return
+		}
+		result := &transferResponse{ResponseWriter: w}
+		handler.ServeHTTP(result, r)
+		if r.Method == http.MethodGet && result.successful() {
 			stop()
 		}
 	})
@@ -216,6 +237,7 @@ func doServe(opts serveOptions, stdout io.Writer) error {
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("serve: %w", err)
 	}
+	<-stopped
 	return nil
 }
 
@@ -235,8 +257,7 @@ func serveHost(opts serveOptions) string {
 // doReceive is the reverse of serving: each POST/PUT request body is streamed to
 // disk. dest is a single file (each request overwrites it) unless it is — or
 // ends with — a directory, in which case every request lands in its own file
-// named from the request URL. GET/HEAD get a one-line usage hint so a browser
-// visit isn't blank.
+// named from the request URL. Other methods return 405 with an Allow header.
 func doReceive(opts serveOptions, stdout io.Writer) error {
 	if opts.path != "" {
 		return usageErrorf("serve: --receive takes the destination as its value; don't also pass a positional path")
@@ -265,92 +286,122 @@ func doReceive(opts serveOptions, stdout io.Writer) error {
 	}
 	printReceiveURLs(stdout, host, port, absDest, dirMode)
 
-	srv := &http.Server{}
-	var stopOnce sync.Once
-	stop := func() { stopOnce.Do(func() { go srv.Shutdown(context.Background()) }) }
+	srv := &http.Server{ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 5 * time.Minute, WriteTimeout: 5 * time.Minute, IdleTimeout: time.Minute}
+	stop, stopped := serverStop(srv)
 
-	var (
-		mu  sync.Mutex
-		seq int
-	)
-	srv.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !opts.quiet {
-			fmt.Fprintf(os.Stderr, "[zvk serve] %s %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
-		}
+	srv.Handler = newReceiveHandler(opts, absDest, dirMode, stop)
+
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+		return fmt.Errorf("serve: %w", err)
+	}
+	<-stopped
+	return nil
+}
+
+// newReceiveHandler admits only one in-flight upload in once mode. Failed
+// uploads release admission so a client can retry; successful ones close it.
+func newReceiveHandler(opts serveOptions, dest string, dirMode bool, stop func()) http.Handler {
+	var mu sync.Mutex
+	seq := 0
+	busy, done := false, false
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost && r.Method != http.MethodPut {
-			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			fmt.Fprintln(w, "zvk serve receive mode — POST or PUT a body here to save it.")
+			w.Header().Set("Allow", "POST, PUT")
+			http.Error(w, "receive mode requires POST or PUT", http.StatusMethodNotAllowed)
 			return
 		}
 		mu.Lock()
+		if opts.once && (busy || done) {
+			mu.Unlock()
+			http.Error(w, "a transfer is already in progress or complete", http.StatusConflict)
+			return
+		}
+		busy = true
 		seq++
 		n := seq
 		mu.Unlock()
-
-		target := absDest
-		if dirMode {
-			target = filepath.Join(absDest, receiveFilename(r.URL.Path, n, absDest))
+		success := false
+		defer func() {
+			mu.Lock()
+			busy = false
+			if success {
+				done = true
+			}
+			mu.Unlock()
+		}()
+		if !opts.quiet {
+			fmt.Fprintf(os.Stderr, "[zvk serve] %s %s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
 		}
-		written, err := saveBody(target, n, r.Body)
+		body := r.Body
+		if opts.maxBytes > 0 {
+			body = http.MaxBytesReader(w, r.Body, opts.maxBytes)
+		}
+		defer body.Close()
+		target, written, err := receiveBody(dest, dirMode, r.URL.Path, n, body)
 		if err != nil {
-			http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
+			var limit *http.MaxBytesError
+			if errors.As(err, &limit) {
+				http.Error(w, "upload exceeds --max-bytes", http.StatusRequestEntityTooLarge)
+			} else {
+				http.Error(w, "save failed", http.StatusInternalServerError)
+			}
 			fmt.Fprintf(os.Stderr, "[zvk serve] save error: %v\n", err)
 			return
 		}
-		fmt.Fprintf(os.Stderr, "[zvk serve] received %d bytes -> %s\n", written, target)
+		success = true
+		if !opts.quiet {
+			fmt.Fprintf(os.Stderr, "[zvk serve] received %d bytes -> %s\n", written, target)
+		}
 		fmt.Fprintf(w, "saved %d bytes to %s\n", written, filepath.Base(target))
 		if opts.once {
 			stop()
 		}
 	})
-
-	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-		return fmt.Errorf("serve: %w", err)
-	}
-	return nil
 }
 
-// receiveFilename derives a safe single-component filename for a request in
-// directory mode. The client names the file via the URL path; path.Base plus a
-// reject of "."/".."/separators guarantees the result can't escape the dest dir.
-// A blank or colliding name falls back to a sequence-numbered one.
-func receiveFilename(urlPath string, seq int, dir string) string {
-	base := path.Base(urlPath)
-	if base == "." || base == ".." || base == "/" || strings.ContainsAny(base, `/\`) {
-		base = ""
+// receiveBody stages the complete body under an unpredictable private name.
+// Directory mode publishes using an exclusive hard link, so even another server
+// cannot overwrite a colliding name. Single-file mode intentionally replaces it.
+func receiveBody(dest string, dirMode bool, urlPath string, seq int, body io.Reader) (string, int64, error) {
+	dir := dest
+	if !dirMode {
+		dir = filepath.Dir(dest)
 	}
-	if base == "" {
-		return fmt.Sprintf("body-%03d", seq)
-	}
-	if !fileExists(filepath.Join(dir, base)) {
-		return base
-	}
-	ext := filepath.Ext(base)
-	return fmt.Sprintf("%s-%03d%s", strings.TrimSuffix(base, ext), seq, ext)
-}
-
-// saveBody streams body to target atomically: write a per-request tmp sibling,
-// then rename into place so a dropped connection never leaves a partial file at
-// the final path. Returns the number of bytes written.
-func saveBody(target string, seq int, body io.Reader) (int64, error) {
-	tmp := fmt.Sprintf("%s.zvk-%03d.part", target, seq)
-	f, err := os.Create(tmp)
+	f, err := os.CreateTemp(dir, ".zvk-upload-*")
 	if err != nil {
-		return 0, err
+		return "", 0, err
 	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
 	n, err := io.Copy(f, body)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
 	if err != nil {
-		os.Remove(tmp)
-		return n, err
+		return "", n, err
 	}
-	if err := os.Rename(tmp, target); err != nil {
-		os.Remove(tmp)
-		return n, err
+	if !dirMode {
+		return dest, n, os.Rename(tmp, dest)
 	}
-	return n, nil
+	base := path.Base(urlPath)
+	if validateName("upload name", base) != nil || strings.HasPrefix(base, ".zvk-upload-") {
+		base = fmt.Sprintf("body-%03d", seq)
+	}
+	ext := filepath.Ext(base)
+	for i := 0; ; i++ {
+		name := base
+		if i > 0 {
+			name = fmt.Sprintf("%s-%03d%s", strings.TrimSuffix(base, ext), i, ext)
+		}
+		target := filepath.Join(dir, name)
+		if err := os.Link(tmp, target); err != nil {
+			if os.IsExist(err) {
+				continue
+			}
+			return "", n, err
+		}
+		return target, n, nil
+	}
 }
 
 // serveListen binds host:port, falling back to an OS-assigned free port when a
@@ -464,12 +515,61 @@ func serveClaudeMd() string {
 		"file named from the request URL (e.g. `POST /report.json` → `inbox/report.json`;\n" +
 		"the name is sanitized to one path component, so a client can't write outside\n" +
 		"`<dest>`); a colliding or unnamed request gets a sequence-numbered name.\n" +
-		"Otherwise `<dest>` is a single file each request overwrites. From the other\n" +
+		"Directory publication requires hard-link support and never overwrites a collision.\n" +
+		"Otherwise `<dest>` is a single file replaced only after a complete upload. From the other\n" +
 		"side: `curl -X POST --data-binary @file http://<host>:8000/name`.\n\n" +
 		"## Options\n\n" +
 		"- `--local` — localhost only (don't expose on the LAN)\n" +
 		"- `-p, --port <n>` — fixed port (default 8000; auto-falls back if taken)\n" +
 		"- `-r, --receive <dest>` — receive mode: save POST/PUT bodies to dest\n" +
-		"- `--once` — exit after the first file is served/received (one-shot)\n" +
+		"- `--max-bytes <n>` — upload limit (default 1 GiB; 0 disables it)\n" +
+		"- `--once` — exit after the first successful transfer; failed uploads can retry\n" +
 		"- `-q, --quiet` — don't log each request\n"
+}
+
+// serverStop waits for active handlers to flush responses before the CLI exits.
+func serverStop(srv *http.Server) (func(), <-chan struct{}) {
+	var once sync.Once
+	done := make(chan struct{})
+	stop := func() {
+		once.Do(func() {
+			go func() {
+				defer close(done)
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if err := srv.Shutdown(ctx); err != nil {
+					srv.Close()
+				}
+			}()
+		})
+	}
+	return stop, done
+}
+
+type transferResponse struct {
+	http.ResponseWriter
+	status     int
+	writeError error
+}
+
+func (w *transferResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *transferResponse) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+func (w *transferResponse) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(p)
+	if err != nil {
+		w.writeError = err
+	}
+	return n, err
+}
+func (w *transferResponse) successful() bool {
+	return (w.status == http.StatusOK || w.status == http.StatusPartialContent) && w.writeError == nil
 }

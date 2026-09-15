@@ -191,11 +191,21 @@ func toolchainInstall(tc *toolchain, channel, requestedRaw string, stdout io.Wri
 	if !tc.channelValid(channel) {
 		return usageErrorf("%s: unknown channel '%s' (expected %s)", tc.name, channel, strings.Join(tc.channelNames(), ", "))
 	}
+	if requestedRaw != "" {
+		if err := validateName("version", requestedRaw); err != nil {
+			return err
+		}
+	}
 	requested := tc.normalize(requestedRaw)
 	root, err := defaultRoot()
 	if err != nil {
 		return err
 	}
+	lock, err := lockToolchain(root, tc.name)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	tag := "[zvk " + tc.name + "]"
 	fmt.Fprintf(stdout, "%s channel: %s\n", tag, channel)
 	fmt.Fprintf(stdout, "%s install root: %s\n", tag, root)
@@ -204,10 +214,16 @@ func toolchainInstall(tc *toolchain, channel, requestedRaw string, stdout io.Wri
 	if err != nil {
 		return err
 	}
+	if err := validateName("version", asset.version); err != nil {
+		return err
+	}
 	fmt.Fprintf(stdout, "%s version: %s\n", tag, asset.version)
 
 	versionDir := tc.dirs.versionDir(root, asset.version)
-	if tc.isInstalled(versionDir) {
+	if err := rejectVersionSymlink(versionDir); err != nil {
+		return err
+	}
+	if tc.complete(versionDir, channel) {
 		fmt.Fprintf(stdout, "%s %s already installed at %s\n", tag, asset.version, versionDir)
 	} else {
 		fmt.Fprintf(stdout, "%s downloading %s\n", tag, asset.url)
@@ -231,19 +247,16 @@ func toolchainInstall(tc *toolchain, channel, requestedRaw string, stdout io.Wri
 		}
 
 		fmt.Fprintf(stdout, "%s extracting to %s\n", tag, versionDir)
-		if err := extractArchive(tarball, versionDir, tc.archiveStrip, asset.filename); err != nil {
+		if err := tc.installArchive(root, channel, asset, tarball); err != nil {
 			return err
 		}
 	}
 
-	if err := tc.dirs.setActive(root, channel, asset.version); err != nil {
+	if err := tc.activate(root, channel, asset.version); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "%s channel '%s' -> %s\n", tag, channel, asset.version)
 
-	if err := tc.installBin(root, channel); err != nil {
-		return err
-	}
 	if err := setupPath(binDir(root), stdout); err != nil {
 		return err
 	}
@@ -282,18 +295,29 @@ func toolchainUse(tc *toolchain, channel, versionRaw string, stdout io.Writer) e
 	if !tc.channelValid(channel) {
 		return usageErrorf("%s: unknown channel '%s' (expected %s)", tc.name, channel, strings.Join(tc.channelNames(), ", "))
 	}
+	if err := validateName("version", versionRaw); err != nil {
+		return err
+	}
 	version := tc.normalize(versionRaw)
+	if err := validateName("version", version); err != nil {
+		return err
+	}
 	root, err := defaultRoot()
 	if err != nil {
 		return err
 	}
-	if !tc.isInstalled(tc.dirs.versionDir(root, version)) {
-		return fmt.Errorf("%s: version '%s' is not installed (run: zvk %s install %s)", tc.name, version, tc.name, version)
-	}
-	if err := tc.dirs.setActive(root, channel, version); err != nil {
+	lock, err := lockToolchain(root, tc.name)
+	if err != nil {
 		return err
 	}
-	if err := tc.installBin(root, channel); err != nil {
+	defer lock.Close()
+	if err := rejectVersionSymlink(tc.dirs.versionDir(root, version)); err != nil {
+		return err
+	}
+	if !tc.complete(tc.dirs.versionDir(root, version), channel) {
+		return fmt.Errorf("%s: version '%s' is not installed (run: zvk %s install %s)", tc.name, version, tc.name, version)
+	}
+	if err := tc.activate(root, channel, version); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "channel '%s' -> %s\n", channel, version)
@@ -301,13 +325,27 @@ func toolchainUse(tc *toolchain, channel, versionRaw string, stdout io.Writer) e
 }
 
 func toolchainUninstall(tc *toolchain, versionRaw string, stdout io.Writer) error {
+	if err := validateName("version", versionRaw); err != nil {
+		return err
+	}
 	version := tc.normalize(versionRaw)
+	if err := validateName("version", version); err != nil {
+		return err
+	}
 	root, err := defaultRoot()
 	if err != nil {
 		return err
 	}
+	lock, err := lockToolchain(root, tc.name)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	versionDir := tc.dirs.versionDir(root, version)
-	if !tc.isInstalled(versionDir) {
+	if err := rejectVersionSymlink(versionDir); err != nil {
+		return err
+	}
+	if !pathExists(versionDir) {
 		return fmt.Errorf("%s: version '%s' is not installed", tc.name, version)
 	}
 	for _, ch := range tc.channelNames() {
@@ -319,7 +357,12 @@ func toolchainUninstall(tc *toolchain, versionRaw string, stdout io.Writer) erro
 			return fmt.Errorf("%s: '%s' is the active version for channel '%s'; switch first with `zvk %s use ...`", tc.name, version, ch, tc.name)
 		}
 	}
-	if err := os.RemoveAll(versionDir); err != nil {
+	versions, err := os.OpenRoot(tc.dirs.versionsDir(root))
+	if err != nil {
+		return err
+	}
+	defer versions.Close()
+	if err := versions.RemoveAll(version); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "removed %s\n", version)

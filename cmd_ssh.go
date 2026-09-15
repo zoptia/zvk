@@ -111,6 +111,9 @@ func runSSHKeygen(args []string, stdout io.Writer) error {
 		id := hex.EncodeToString(pub[:4])
 		name = "id_ed25519_" + id
 	}
+	if err := validateName("key name", name); err != nil {
+		return err
+	}
 	if comment == "" {
 		user := os.Getenv("USER")
 		if user == "" {
@@ -215,6 +218,9 @@ func requireName(args []string, usage string) (string, error) {
 	if len(args) < 1 {
 		return "", usageErrorf("%s", usage)
 	}
+	if err := validateName("key name", args[0]); err != nil {
+		return "", err
+	}
 	return args[0], nil
 }
 
@@ -287,6 +293,9 @@ func runSSHPath(args []string, stdout io.Writer) error {
 		return err
 	}
 	if len(args) >= 1 {
+		if err := validateName("key name", args[0]); err != nil {
+			return err
+		}
 		fmt.Fprintln(stdout, sshKeyPath(root, args[0]))
 		return nil
 	}
