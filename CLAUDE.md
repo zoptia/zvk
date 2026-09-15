@@ -16,7 +16,9 @@ go mod tidy                   # sync dependencies
 go install github.com/zoptia/zvk@latest   # build + install to $GOBIN
 ```
 
-No test suite exists yet. To smoke-test install flows without touching the real
+Run `go test -race ./...` for install, path confinement, locking, activation,
+and HTTP transfer regression tests. Tests use temporary directories and synthetic
+archives; they do not install real toolchains. To smoke-test install flows without touching the real
 `~/.zvk/`, run with a sandbox root:
 
 ```sh
@@ -135,8 +137,13 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   `dest` as a single file (overwritten per request), or, when `dest` is/ends a
   directory, one atomic file per request named from the request URL. The name is
   reduced to a single path component via `path.Base` + a `.`/`..`/separator
-  reject (`receiveFilename`), so a client cannot write outside `dest`; bodies are
-  streamed to a tmp sibling and renamed (`saveBody`). It blocks, so an assistant
+  reject, so a client cannot choose a destination outside `dest`. Bodies are
+  staged under unpredictable temporary names (`receiveBody`). Directory uploads
+  publish with an exclusive hard link, retrying name collisions without overwriting
+  existing files; this mode requires a filesystem supporting hard links. Single-file
+  uploads replace the destination by rename. `--max-bytes` defaults to 1 GiB
+  (0 disables the limit). Once mode admits one upload at a time and permits retries
+  after failure; shutdown waits for the response to finish. It blocks, so an assistant
   runs it in the background and reads the printed URL. Also writes its own
   `<root>/serve/CLAUDE.md` pointer.
 - `claudemd.go` — aggregates each feature's `<root>/<feature>/CLAUDE.md` into a
@@ -173,20 +180,25 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
 - `pathenv.go` — idempotent shell-rc edit for bash/zsh/fish. Searches for
   `binDir` substring before appending to avoid duplicate writes.
 - `util.go` — `defaultRoot`, `currentTarget`, `writeFileAtomic` (tmp + rename),
-  `replaceSymlink` (rm + symlink), `sha256Hex`, platform predicates, the
+  `replaceSymlink` (temporary symlink + rename), `sha256Hex`, platform predicates, the
   user-facing `zvkVersion` constant, and the `modulePath` install path.
 
 ### Toolchain install pipeline (one shape for Zig, Go, Node — see `toolchain.go`)
 
-1. Fetch upstream index JSON (`ziglang.org/download/index.json` or
+1. Acquire a per-toolchain process lock (also used by use/uninstall), then fetch
+   upstream index JSON (`ziglang.org/download/index.json` or
    `go.dev/dl/?mode=json`).
 2. Resolve the entry for `(channel, target)` — for Zig release, the latest
    semver key wins; for nightly, `master`; for Go latest, the first `stable`
    release.
-3. Skip if `versions/<ver>/` already has the executable.
+3. Skip download only if required executables and driver-specific payload files exist.
 4. Download tarball → verify sha256 → (Zig only) fetch `.minisig` and verify.
-5. Extract via `extractArchive` (dispatched on URL suffix).
-6. `setActiveVersion(channel, ver)` → `installBin(channel)` → `setupPath(bin)`.
+5. Extract via `extractArchive` into a private staging directory, confining file
+   operations with `os.Root`. Validate required files before publishing the directory.
+6. Preflight channel/bin entries, activate with rollback on write errors, then
+   `setupPath(bin)`. POSIX switches the channel last via rename; Windows shim
+   updates are individually replaced, with rollback on ordinary errors (the group
+   is not crash-atomic).
 7. Optional `postInstall(root, ver, channel)` for side artifacts — zig uses it
    for the Claude Code reference docs (`zigdoc.go`); go/node leave it nil.
 
@@ -200,7 +212,8 @@ download+extract pipeline).
 ## Conventions
 
 - **Minimal dependencies.** Core toolchain logic uses only `golang.org/x/crypto`
-  (ssh + blake2b) and `github.com/ulikunitz/xz`. The `fetch` command adds
+  (ssh + blake2b), `github.com/ulikunitz/xz`, and `golang.org/x/sys` for Windows
+  process locking (already present transitively). The `fetch` command adds
   `github.com/bogdanfinn/tls-client` (+ its `fhttp`/`utls` forks) — the one
   deliberate exception, since real browser TLS fingerprinting can't be done with
   stdlib `crypto/tls`. Do not introduce more without a comparably strong reason.
@@ -212,7 +225,7 @@ download+extract pipeline).
 - **Atomic file writes.** Use `writeFileAtomic` for any user-visible file
   (binaries, keys, config). It writes to a tmp file in the same dir and
   renames.
-- **Symlink replacement.** Use `replaceSymlink` (rm + symlink) — never write
+- **Symlink replacement.** Use `replaceSymlink` (temporary symlink + rename) — never write
   through an existing symlink.
 - **POSIX/Windows split.** Anything filesystem-shaped (channels, bin entries,
   PATH setup) branches on `isWindows()`. Keep the POSIX path the simple one.

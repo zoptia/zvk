@@ -43,7 +43,8 @@ var goTC = &toolchain{
 	},
 	normalizeVersion: normalizeGoVersion,
 	isInstalled: func(versionDir string) bool {
-		return fileExists(filepath.Join(versionDir, "bin", goExeName()))
+		return fileExists(filepath.Join(versionDir, "bin", goExeName())) &&
+			fileExists(filepath.Join(versionDir, "src", "runtime", "runtime.go"))
 	},
 	bins: func(channel string) []binSpec {
 		return []binSpec{

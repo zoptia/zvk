@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -46,6 +47,11 @@ func extractArchive(archive []byte, dest string, strip int, sourceURL string) er
 // (devices, fifos, xattr metadata) are skipped silently — the toolchains we
 // install never contain them.
 func extractTar(r io.Reader, dest string, strip int) error {
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
@@ -59,27 +65,27 @@ func extractTar(r io.Reader, dest string, strip int) error {
 		if name == "" {
 			continue
 		}
-		if hasParentSegment(name) {
-			return fmt.Errorf("refusing tar entry with `..` segment: %q", hdr.Name)
+		if !safeArchivePath(name) {
+			return fmt.Errorf("refusing unsafe tar entry: %q", hdr.Name)
 		}
-		target := filepath.Join(dest, name)
+		target := filepath.FromSlash(name)
 		mode := os.FileMode(hdr.Mode) & 0o777
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			// Force u+rwx so we can still write children even if the archived
 			// directory was read-only.
-			if err := os.MkdirAll(target, mode|0o700); err != nil {
+			if err := root.MkdirAll(target, mode|0o700); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
 			if mode == 0 {
 				mode = 0o644
 			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+			f, err := root.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 			if err != nil {
 				return err
 			}
@@ -91,22 +97,29 @@ func extractTar(r io.Reader, dest string, strip int) error {
 				return err
 			}
 		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if !safeLinkTarget(name, hdr.Linkname) {
+				return fmt.Errorf("unsafe symlink target: %q", hdr.Linkname)
+			}
+			if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
-			_ = os.Remove(target)
-			if err := os.Symlink(hdr.Linkname, target); err != nil {
+			_ = root.Remove(target)
+			if err := root.Symlink(filepath.FromSlash(hdr.Linkname), target); err != nil {
 				return err
 			}
 		case tar.TypeLink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
 			// Hardlink targets are archive-relative, so they need the same
 			// strip applied.
-			linkTarget := filepath.Join(dest, stripComponents(hdr.Linkname, strip))
-			_ = os.Remove(target)
-			if err := os.Link(linkTarget, target); err != nil {
+			linkName := stripComponents(hdr.Linkname, strip)
+			if !safeArchivePath(linkName) {
+				return fmt.Errorf("unsafe hardlink target: %q", hdr.Linkname)
+			}
+			linkTarget := filepath.FromSlash(linkName)
+			_ = root.Remove(target)
+			if err := root.Link(linkTarget, target); err != nil {
 				return err
 			}
 		}
@@ -116,6 +129,11 @@ func extractTar(r io.Reader, dest string, strip int) error {
 
 // extractZip extracts a zip archive in pure Go, emulating tar's strip_components.
 func extractZip(data []byte, dest string, strip int) error {
+	root, err := os.OpenRoot(dest)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return err
@@ -125,17 +143,17 @@ func extractZip(data []byte, dest string, strip int) error {
 		if name == "" {
 			continue
 		}
-		if hasParentSegment(name) {
-			return fmt.Errorf("refusing zip entry with `..` segment: %q", f.Name)
+		if !safeArchivePath(name) {
+			return fmt.Errorf("refusing unsafe zip entry: %q", f.Name)
 		}
-		target := filepath.Join(dest, name)
+		target := filepath.FromSlash(name)
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := root.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
 		rc, err := f.Open()
@@ -146,7 +164,7 @@ func extractZip(data []byte, dest string, strip int) error {
 		if mode == 0 {
 			mode = 0o644
 		}
-		dst, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+		dst, err := root.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 		if err != nil {
 			rc.Close()
 			return err
@@ -188,4 +206,26 @@ func hasParentSegment(name string) bool {
 		}
 	}
 	return false
+}
+
+// Archive paths use slash separators on every platform. Reject platform-specific
+// separators and volumes before converting to host paths; os.Root also confines
+// all filesystem operations, including traversals through earlier symlinks.
+func safeArchivePath(name string) bool {
+	if name == "" || path.IsAbs(name) || strings.ContainsAny(name, `\:`) || hasParentSegment(name) {
+		return false
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part != "" && part != "." && validateName("archive entry", part) != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func safeLinkTarget(name, target string) bool {
+	if target == "" || path.IsAbs(target) || strings.ContainsAny(target, `\:`) {
+		return false
+	}
+	return safeArchivePath(path.Join(path.Dir(name), target))
 }

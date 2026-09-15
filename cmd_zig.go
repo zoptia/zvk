@@ -47,7 +47,8 @@ var zigTC = &toolchain{
 		{name: "nightly", label: "(nightly, opt-in)"},
 	},
 	isInstalled: func(versionDir string) bool {
-		return fileExists(filepath.Join(versionDir, zigExeName()))
+		return fileExists(filepath.Join(versionDir, zigExeName())) &&
+			fileExists(filepath.Join(versionDir, "lib", "std", "std.zig"))
 	},
 	// bin/zig for release, bin/zig-nightly for nightly; the executable sits at
 	// the version-dir root (lib/ is adjacent, so Zig finds it via the symlink).
