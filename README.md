@@ -241,6 +241,27 @@ that first to see what will change.
 4. `add` invokes `ssh-add`; `copy` invokes `pbcopy` on macOS, `wl-copy` or
    `xclip` on Linux.
 
+### Browser fingerprints
+
+`zvk fetch` follows the default Chrome profile in its linked `tls-client` release.
+With `tls-client v1.16.0`, that default is Chrome 150; Chrome 152 is also available
+as an explicit profile. Existing binaries do not update profiles at runtime.
+
+```sh
+zvk fetch --list-profiles
+zvk fetch https://example.com
+zvk fetch --profile chrome_152 https://example.com
+zvk fetch --profile chrome_152_PSK https://example.com
+```
+
+Chrome User-Agent and Client Hints versions derive from the selected profile,
+including PSK variants. Client Hints brand ordering and GREASE values follow
+[Chromium's version-seeded generation](https://chromium.googlesource.com/chromium/src/+/main/components/embedder_support/user_agent_utils.cc).
+Profile names are case-insensitive. Non-Chrome profiles select the transport
+fingerprint while retaining the default Chrome headers; use `-A` and `-H` to
+customize those headers. Browser fingerprints can improve compatibility with
+some sites but do not execute JavaScript or guarantee access.
+
 ## Reliability and file receiving
 
 Toolchain install/use/uninstall operations use a per-toolchain OS lock. A second
@@ -293,7 +314,7 @@ toolchains or changing shell configuration.
 
 ## Build from source
 
-Requires Go 1.25 or newer.
+Requires Go 1.26 or newer.
 
 ```sh
 go install github.com/zoptia/zvk@latest    # straight to $GOBIN
@@ -308,13 +329,13 @@ zvk go install
 
 ## Third-party dependencies
 
-Two, both de-facto standards:
+Direct dependencies:
 
-- `golang.org/x/crypto` (the Go team's official extension module)
-  - `crypto/ssh` — OpenSSH public/private key serialization (no stdlib equivalent)
-  - `crypto/blake2b` — minisign `ED` prehashed signatures (stdlib has no blake2)
-- `github.com/ulikunitz/xz` — pure-Go xz decompression (stdlib has no xz; Zig
-  release tarballs are `.tar.xz`)
+- `golang.org/x/crypto` — SSH key serialization and BLAKE2b for minisign.
+- `golang.org/x/sys` — Windows process locking.
+- `github.com/ulikunitz/xz` — pure-Go xz decompression.
+- `github.com/bogdanfinn/tls-client` and `github.com/bogdanfinn/fhttp` — browser
+  TLS/HTTP2 fingerprints and the HTTP client used by `zvk fetch`.
 
 tar/gz/zip are handled entirely by the standard library (`archive/tar`,
 `compress/gzip`, `archive/zip`); there is no dependency on the system `tar`

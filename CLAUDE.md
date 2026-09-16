@@ -117,16 +117,15 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   wrapped in `sudo` (stdin passed through). `primaryIPv4` uses a UDP `net.Dial`
   to read the default-route interface IP cross-platform (no `ip`/`ifconfig`
   parsing). `--dry-run` prints commands without running them.
-- `cmd_fetch.go` — the `fetch` command: a single-shot HTTP client built on
-  `github.com/bogdanfinn/tls-client` that impersonates the latest Chrome's TLS +
-  HTTP/2 fingerprint (ClientHello/JA3, HTTP/2 SETTINGS, header order), so
-  anti-bot edges (Cloudflare, Akamai) return real content instead of a
-  challenge. Default profile is the upstream-tracked "latest Chrome"
-  (`profiles.DefaultClientProfile`); `--profile` selects any `MappedTLSClients`
-  key. Sends a realistic Chrome header set; gzip/brotli are auto-decompressed so
-  the body is readable text. Linked into the toolchain via `bogdanfinn/fhttp`
-  (a net/http fork), not stdlib `net/http`. Companion `fetchdoc.go` writes its
-  `<root>/fetch/CLAUDE.md` pointer.
+- `cmd_fetch.go` — a single-shot HTTP client using `tls-client` and `fhttp`.
+  Default transport follows `profiles.DefaultClientProfile` in the linked library
+  (Chrome 150 in tls-client v1.16.0; Chrome 152 is selectable). Chrome User-Agent
+  and Client Hints derive from the selected profile, including PSK variants;
+  GREASE brands and ordering use Chromium's major-version seed. Non-Chrome
+  transport profiles retain the default Chrome headers unless overridden with
+  `-A`/`-H`. Profile keys are case-insensitive and `--list-profiles` reports the
+  resolved default. Fingerprinting can improve compatibility but does not execute
+  JavaScript or guarantee access. `fetchdoc.go` writes `<root>/fetch/CLAUDE.md`.
 - `cmd_serve.go` — the `serve` command: a stdlib `net/http` static file server
   to share a generated report over HTTP. Binds `0.0.0.0` by default (prints a
   localhost + a LAN URL via `primaryIPv4`); `--local` restricts to loopback.

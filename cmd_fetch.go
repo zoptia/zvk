@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	fhttp "github.com/bogdanfinn/fhttp"
@@ -14,21 +15,15 @@ import (
 )
 
 // ============================================================================
-// fetch — issue an HTTP request while impersonating a real browser's TLS +
-// HTTP/2 fingerprint, so the response is what a Chrome user would get rather
-// than what an anti-bot edge serves to scripts.
+// fetch — issue HTTP requests with browser TLS and HTTP/2 fingerprints.
+// Matching a browser's transport and headers can improve compatibility with
+// some sites; it does not execute JavaScript or guarantee access.
 //
-// WebFetch/curl/Go's net/http present a Go TLS ClientHello (a distinctive JA3)
-// and a non-browser HTTP/2 SETTINGS frame. Cloudflare, Akamai, PerimeterX and
-// friends fingerprint exactly that and answer with a challenge page or 403. By
-// driving bogdanfinn/tls-client we reuse Chrome's real ClientHello, HTTP/2
-// settings, header order and pseudo-header order, so the request is
-// indistinguishable from the browser it claims to be.
-//
-// The default profile is profiles.DefaultClientProfile — the upstream-tracked
-// "latest Chrome" — so `zvk fetch <url>` impersonates current Chrome with no
-// version pinning on our side. `--profile <name>` selects any of the
-// MappedTLSClients keys (`zvk fetch --list-profiles`).
+// The default follows profiles.DefaultClientProfile in the linked tls-client
+// release. Chrome User-Agent and Client Hints derive from the selected profile,
+// so dependency updates cannot leave a stale, independently pinned version.
+// --list-profiles prints the resolved default; --profile selects an explicit
+// upstream profile, including PSK variants.
 //
 // This is a single-shot client (no proxy server, no daemon): it fits the
 // "self-contained single binary" model — the TLS-Client library is linked in,
@@ -39,15 +34,15 @@ const fetchUsage = `Usage:
   zvk fetch [options] <url>
 
 Issue an HTTP request impersonating a real browser's TLS/HTTP2 fingerprint.
-The default profile is the latest Chrome, so pages behind anti-bot edges
-(Cloudflare, Akamai, ...) return real content instead of a challenge.
+The default follows tls-client's Chrome profile (see --list-profiles for its
+version). Browser fingerprints can improve compatibility; access is not guaranteed.
 
 Options:
   -X, --method <M>      HTTP method (default GET, or POST when --data is set)
   -H, --header <k: v>   Add/override a request header (repeatable)
   -d, --data <body>     Request body; @file reads the body from a file
   -A, --user-agent <s>  Override the User-Agent header
-  -p, --profile <name>  Client profile to impersonate (default: latest Chrome)
+  -p, --profile <name>  Client profile to impersonate (default: tls-client Chrome)
   -o, --output <file>   Write the body to <file> instead of stdout
   -i, --include         Print the status line and response headers before body
   -I, --head            Issue a HEAD request and print headers only
@@ -65,7 +60,7 @@ Examples:
   zvk fetch https://example.com
   zvk fetch -i https://api.github.com/repos/zoptia/zvk
   zvk fetch -X POST -H 'Content-Type: application/json' -d '{"a":1}' https://httpbin.org/post
-  zvk fetch --profile firefox_133 https://tls.peet.ws/api/all
+  zvk fetch --profile chrome_152 https://tls.peet.ws/api/all
 `
 
 // fetchOptions holds the parsed command line for a single request.
@@ -362,24 +357,32 @@ func parsePositiveInt(s string) (int, error) {
 // ----------------------------------------------------------------------------
 
 // resolveProfile maps a user-facing profile name to a ClientProfile. The empty
-// string and the convenience aliases map to the upstream "latest Chrome"
-// default; anything else is looked up by key in MappedTLSClients.
+// string and convenience aliases map to the linked upstream default. Profile
+// keys are matched case-insensitively, including mixed-case PSK suffixes.
 func resolveProfile(name string) (profiles.ClientProfile, bool) {
 	switch strings.ToLower(name) {
 	case "", "chrome", "chrome-latest", "latest", "default":
 		return profiles.DefaultClientProfile, true
 	}
-	if p, ok := profiles.MappedTLSClients[strings.ToLower(name)]; ok {
+	if p, ok := profiles.MappedTLSClients[name]; ok {
 		return p, true
+	}
+	for key, p := range profiles.MappedTLSClients {
+		if strings.EqualFold(key, name) {
+			return p, true
+		}
 	}
 	return profiles.ClientProfile{}, false
 }
 
 func profileLabel(name string) string {
 	if name == "" {
-		return "chrome-latest"
+		name = "chrome-latest"
 	}
-	return strings.ToLower(name)
+	if p, ok := resolveProfile(name); ok {
+		return p.GetClientHelloStr()
+	}
+	return name
 }
 
 func printFetchProfiles(stdout io.Writer) {
@@ -388,7 +391,7 @@ func printFetchProfiles(stdout io.Writer) {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	fmt.Fprintf(stdout, "Default profile: chrome-latest (latest Chrome, tracked by tls-client)\n\n")
+	fmt.Fprintf(stdout, "Default profile: chrome-latest (%s; tls-client default)\n\n", profiles.DefaultClientProfile.GetClientHelloStr())
 	fmt.Fprintln(stdout, "Available profiles (pass with --profile):")
 	for _, k := range keys {
 		fmt.Fprintf(stdout, "  %s\n", k)
@@ -405,13 +408,14 @@ func printFetchProfiles(stdout io.Writer) {
 // gzip and transparently decompresses — the body reaches the caller as readable
 // text rather than a compressed blob.
 func buildFetchHeaders(opts fetchOptions) fhttp.Header {
+	major := chromeMajorVersion(opts.profile)
 	ua := opts.userAgent
 	if ua == "" {
-		ua = chromeUserAgent()
+		ua = chromeUserAgent(major)
 	}
 
 	h := fhttp.Header{
-		"sec-ch-ua":                 {chromeSecChUa()},
+		"sec-ch-ua":                 {chromeSecChUa(major)},
 		"sec-ch-ua-mobile":          {"?0"},
 		"sec-ch-ua-platform":        {chromePlatform()},
 		"upgrade-insecure-requests": {"1"},
@@ -449,11 +453,26 @@ func buildFetchHeaders(opts fetchOptions) fhttp.Header {
 	return h
 }
 
-// chromeUserAgent returns a current-Chrome UA string matching the host OS. The
-// Chrome major aligns with profiles.DefaultClientProfile; override with -A if a
-// specific build is needed.
-func chromeUserAgent() string {
-	const ver = "133.0.0.0"
+// chromeMajorVersion uses a Chrome profile's numeric major, ignoring variants
+// such as _PSK. Non-Chrome transport profiles retain the default Chrome headers;
+// callers can customize those separately with -A and -H.
+func chromeMajorVersion(name string) int {
+	p, ok := resolveProfile(name)
+	if !ok || p.GetClientHelloId().Client != "Chrome" {
+		p = profiles.DefaultClientProfile
+	}
+	version := p.GetClientHelloId().Version
+	end := 0
+	for end < len(version) && version[end] >= '0' && version[end] <= '9' {
+		end++
+	}
+	major, _ := strconv.Atoi(version[:end])
+	return major
+}
+
+// chromeUserAgent uses Chrome's reduced version format and the host OS.
+func chromeUserAgent(major int) string {
+	ver := strconv.Itoa(major) + ".0.0.0"
 	switch runtime.GOOS {
 	case "windows":
 		return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + ver + " Safari/537.36"
@@ -464,8 +483,23 @@ func chromeUserAgent() string {
 	}
 }
 
-func chromeSecChUa() string {
-	return `"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"`
+// chromeSecChUa follows Chromium's major-version-seeded GREASE brand and order.
+// Reference: components/embedder_support/user_agent_utils.cc in chromium/src.
+func chromeSecChUa(major int) string {
+	chars := []string{" ", "(", ":", "-", ".", "/", ")", ";", "=", "?", "_"}
+	greaseVersions := []string{"8", "99", "24"}
+	grease := "Not" + chars[major%len(chars)] + "A" + chars[(major+1)%len(chars)] + "Brand"
+	brands := []string{
+		fmt.Sprintf(`"%s";v="%s"`, grease, greaseVersions[major%len(greaseVersions)]),
+		fmt.Sprintf(`"Chromium";v="%d"`, major),
+		fmt.Sprintf(`"Google Chrome";v="%d"`, major),
+	}
+	orders := [6][3]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}}
+	var ordered [3]string
+	for i, position := range orders[major%len(orders)] {
+		ordered[position] = brands[i]
+	}
+	return strings.Join(ordered[:], ", ")
 }
 
 func chromePlatform() string {

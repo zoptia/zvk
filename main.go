@@ -15,7 +15,7 @@ Usage:
   zvk ssh  <cmd> [args...]      SSH key management
   zvk app  <cmd> [args...]      Install assorted tools/apps (homebrew, claude-code, winget, scoop)
 
-  zvk fetch [opts] <url>        HTTP request impersonating the latest Chrome's TLS fingerprint
+  zvk fetch [opts] <url>        HTTP request with Chrome's TLS/HTTP2 fingerprint
   zvk serve [opts] [path]       Share a file/dir over HTTP (e.g. open a generated report)
 
   zvk status [--json]           Combined status (zig + go)
