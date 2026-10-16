@@ -13,6 +13,9 @@
 #   GOPROXY       Go module proxy
 
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 redraws the progress bar for every chunk Invoke-WebRequest
+# reads, which slows a ~70 MB download by an order of magnitude or more.
+$ProgressPreference = 'SilentlyContinue'
 
 $Module  = 'github.com/zoptia/zvk'
 $Version = if ($env:ZVK_VERSION) { $env:ZVK_VERSION } else { 'latest' }
@@ -59,8 +62,10 @@ if (Test-GoOk $godir) {
     $zip = Join-Path $env:TEMP "$gover.windows-$arch.zip"
     Invoke-WebRequest "https://go.dev/dl/$gover.windows-$arch.zip" -OutFile $zip
     # Archives wrap everything in a top-level go\ — extract, validate, then lift
-    # that go\ dir into place.
-    Expand-Archive -Path $zip -DestinationPath $extract -Force
+    # that go\ dir into place. ZipFile is used instead of Expand-Archive, which is
+    # very slow on an archive with ~15k entries.
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $extract)
     Remove-Item $zip
     $staged = Join-Path $extract 'go'
     if (-not (Test-GoOk $staged)) {
