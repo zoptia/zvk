@@ -4,17 +4,43 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 )
 
 const (
-	goIndexURLStable = "https://go.dev/dl/?mode=json"
-	goIndexURLAll    = "https://go.dev/dl/?mode=json&include=all"
-	goDLBase         = "https://go.dev/dl/"
-	goChannel        = "stable"
+	goDefaultSite = "https://go.dev"
+	goChannel     = "stable"
 )
+
+// goSite returns the site serving the Go release index (go.dev's /dl/?mode=json
+// layout). ZVK_GO_SITE overrides it.
+func goSite() string {
+	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("ZVK_GO_SITE")), "/"); v != "" {
+		return v
+	}
+	return goDefaultSite
+}
+
+// goArchiveBase returns the URL prefix archives are downloaded from.
+// ZVK_GO_MIRROR names a flat directory of release archives, e.g.
+// https://dl.google.com/go/. Archives are still verified against the
+// sha256 from goSite's index, so the mirror is not trusted.
+func goArchiveBase() string {
+	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("ZVK_GO_MIRROR")), "/"); v != "" {
+		return v + "/"
+	}
+	return goSite() + "/dl/"
+}
+
+func goIndexURL(all bool) string {
+	if all {
+		return goSite() + "/dl/?mode=json&include=all"
+	}
+	return goSite() + "/dl/?mode=json"
+}
 
 const goUsage = `Usage:
   zvk go install [<version>|latest]    Install Go (default: latest stable)
@@ -126,11 +152,7 @@ type goAsset struct {
 func resolveGoAssetForInstall(channel, requested string) (toolAsset, error) {
 	osStr := runtime.GOOS
 	arch := runtime.GOARCH
-	url := goIndexURLStable
-	if requested != "latest" && requested != "stable" {
-		url = goIndexURLAll
-	}
-	indexBytes, err := downloadToMemory(url)
+	indexBytes, err := downloadToMemory(goIndexURL(requested != "latest" && requested != "stable"))
 	if err != nil {
 		return toolAsset{}, err
 	}
@@ -140,7 +162,7 @@ func resolveGoAssetForInstall(channel, requested string) (toolAsset, error) {
 	}
 	return toolAsset{
 		version:  asset.Version,
-		url:      goDLBase + asset.Filename,
+		url:      goArchiveBase() + asset.Filename,
 		sha256:   asset.Sha256,
 		filename: asset.Filename,
 	}, nil
@@ -175,7 +197,7 @@ func resolveGoAsset(indexJSON []byte, requested, osStr, arch string) (goAsset, e
 
 func goListRemote(stdout io.Writer) error {
 	fmt.Fprintln(stdout, "Fetching remote release index...")
-	data, err := downloadToMemory(goIndexURLAll)
+	data, err := downloadToMemory(goIndexURL(true))
 	if err != nil {
 		return err
 	}

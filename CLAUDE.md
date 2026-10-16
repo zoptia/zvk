@@ -240,6 +240,8 @@ download+extract pipeline).
 | `ZVK_NO_CLAUDE_MD` | Generate the zig reference docs but don't write/inject `CLAUDE.md` |
 | `ZVK_VERSION` | Module version the installer / `self-update` installs |
 | `GOPROXY` | Go module proxy used by the installer and `self-update` |
+| `ZVK_GO_SITE` | Site serving the Go version/index in go.dev's `/VERSION` + `/dl/?mode=json` layout (default `https://go.dev`); used by the installers and `zvk go` |
+| `ZVK_GO_MIRROR` | Flat directory of Go release archives (e.g. `https://dl.google.com/go/`); archives are verified against the sha256 in `ZVK_GO_SITE`'s index |
 
 ## Release / version bumps
 

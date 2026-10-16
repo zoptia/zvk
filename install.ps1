@@ -11,6 +11,10 @@
 #   ZVK_VERSION   module version to install (default: latest)
 #   ZVK_ROOT      install root (default: %USERPROFILE%\.zvk)
 #   GOPROXY       Go module proxy
+#   ZVK_GO_SITE   site serving the Go version/index in go.dev's layout
+#                 (default: https://go.dev)
+#   ZVK_GO_MIRROR flat directory of Go archives, verified against the index
+#                 sha256 (e.g. https://dl.google.com/go/)
 
 $ErrorActionPreference = 'Stop'
 # Windows PowerShell 5.1 redraws the progress bar for every chunk Invoke-WebRequest
@@ -21,6 +25,8 @@ $Module  = 'github.com/zoptia/zvk'
 $Version = if ($env:ZVK_VERSION) { $env:ZVK_VERSION } else { 'latest' }
 $Root    = if ($env:ZVK_ROOT)    { $env:ZVK_ROOT }    else { Join-Path $HOME '.zvk' }
 if (-not $env:GOPROXY) { $env:GOPROXY = 'https://proxy.golang.org,direct' }
+$GoSite   = if ($env:ZVK_GO_SITE)   { $env:ZVK_GO_SITE.TrimEnd('/') }   else { 'https://go.dev' }
+$GoMirror = if ($env:ZVK_GO_MIRROR) { $env:ZVK_GO_MIRROR.TrimEnd('/') } else { '' }
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     'ARM64' { 'arm64' }
@@ -32,7 +38,7 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
 # latest Go straight into the managed versions dir: this same copy both builds
 # zvk and becomes zvk's default `go`. A non-zvk `go` already on PATH (if any) is
 # reported afterwards by `zvk go install` — zvk never touches the system copy.
-$gover = ((Invoke-RestMethod 'https://go.dev/VERSION?m=text') -split "`n")[0].Trim()
+$gover = ((Invoke-RestMethod "$GoSite/VERSION?m=text") -split "`n")[0].Trim()
 $godir = Join-Path $Root "go\versions\$gover"
 
 # A managed Go is only trusted if the toolchain is actually complete. If a prior
@@ -60,7 +66,24 @@ if (Test-GoOk $godir) {
     if (Test-Path $godir)   { Remove-Item -Recurse -Force $godir }
     if (Test-Path $extract) { Remove-Item -Recurse -Force $extract }
     $zip = Join-Path $env:TEMP "$gover.windows-$arch.zip"
-    Invoke-WebRequest "https://go.dev/dl/$gover.windows-$arch.zip" -OutFile $zip
+    $goarchive = "$gover.windows-$arch.zip"
+    if (-not $GoMirror) {
+        Invoke-WebRequest "$GoSite/dl/$goarchive" -OutFile $zip
+    } else {
+        # A third-party mirror is not trusted: check the archive against the
+        # sha256 in the official index before extracting.
+        $want = (Invoke-RestMethod "$GoSite/dl/?mode=json").files |
+            Where-Object { $_.filename -eq $goarchive } |
+            Select-Object -First 1 -ExpandProperty sha256
+        if (-not $want) { throw "[zvk] no sha256 for $goarchive in $GoSite index; aborting" }
+        Write-Host "[zvk] downloading $goarchive from $GoMirror"
+        Invoke-WebRequest "$GoMirror/$goarchive" -OutFile $zip
+        $got = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+        if ($got -ne $want) {
+            Remove-Item $zip
+            throw "[zvk] sha256 mismatch for $goarchive from mirror (got $got, want $want); aborting"
+        }
+    }
     # Archives wrap everything in a top-level go\ — extract, validate, then lift
     # that go\ dir into place. ZipFile is used instead of Expand-Archive, which is
     # very slow on an archive with ~15k entries.

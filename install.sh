@@ -12,6 +12,10 @@
 #   ZVK_VERSION   module version to install (default: latest)
 #   ZVK_ROOT      install root (default: ~/.zvk)
 #   GOPROXY       Go module proxy
+#   ZVK_GO_SITE   site serving the Go version/index in go.dev's layout
+#                 (default: https://go.dev)
+#   ZVK_GO_MIRROR flat directory of Go archives, verified against the index
+#                 sha256 (e.g. https://dl.google.com/go/)
 
 set -eu
 
@@ -19,6 +23,10 @@ MODULE="github.com/zoptia/zvk"
 VERSION="${ZVK_VERSION:-latest}"
 ROOT="${ZVK_ROOT:-$HOME/.zvk}"
 export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
+GO_SITE="${ZVK_GO_SITE:-https://go.dev}"
+GO_SITE="${GO_SITE%/}"
+GO_MIRROR="${ZVK_GO_MIRROR:-}"
+GO_MIRROR="${GO_MIRROR%/}"
 
 fetch() {
     if command -v curl >/dev/null 2>&1; then
@@ -46,7 +54,7 @@ esac
 # latest Go straight into the managed versions dir: this same copy both builds
 # zvk and becomes zvk's default `go`. A non-zvk `go` already on PATH (if any) is
 # reported afterwards by `zvk go install` — zvk never touches the system copy.
-gover=$(fetch "https://go.dev/VERSION?m=text" | head -n1)
+gover=$(fetch "$GO_SITE/VERSION?m=text" | head -n1)
 godir="$ROOT/go/versions/$gover"
 
 # A managed Go is only trusted if the toolchain is actually complete. The
@@ -69,7 +77,37 @@ else
     rm -rf "$godir" "$godir.tmp"
     mkdir -p "$godir.tmp"
     # Go archives wrap everything in a top-level go/ — strip it.
-    fetch "https://go.dev/dl/${gover}.${goos}-${goarch}.tar.gz" | tar -xzf - -C "$godir.tmp" --strip-components=1
+    goarchive="${gover}.${goos}-${goarch}.tar.gz"
+    if [ -z "$GO_MIRROR" ]; then
+        fetch "$GO_SITE/dl/$goarchive" | tar -xzf - -C "$godir.tmp" --strip-components=1
+    else
+        # A third-party mirror is not trusted: download to a file and check it
+        # against the sha256 in the official index before extracting. Flattening
+        # the JSON on braces puts each file entry on its own line.
+        want=$(fetch "$GO_SITE/dl/?mode=json" | tr -d '\n' | tr '{}' '\n\n' |
+            grep "\"filename\": *\"$goarchive\"" |
+            sed -n 's/.*"sha256": *"\([0-9a-f]\{64\}\)".*/\1/p' | head -n1)
+        if [ -z "$want" ]; then
+            echo "[zvk] no sha256 for $goarchive in $GO_SITE index; aborting" >&2
+            rm -rf "$godir.tmp"
+            exit 1
+        fi
+        tmpar="$godir.tmp.tar.gz"
+        echo "[zvk] downloading $goarchive from $GO_MIRROR"
+        fetch "$GO_MIRROR/$goarchive" > "$tmpar"
+        if command -v sha256sum >/dev/null 2>&1; then
+            got=$(sha256sum "$tmpar" | cut -d' ' -f1)
+        else
+            got=$(shasum -a 256 "$tmpar" | cut -d' ' -f1)
+        fi
+        if [ "$got" != "$want" ]; then
+            echo "[zvk] sha256 mismatch for $goarchive from mirror (got $got, want $want); aborting" >&2
+            rm -rf "$godir.tmp" "$tmpar"
+            exit 1
+        fi
+        tar -xzf "$tmpar" -C "$godir.tmp" --strip-components=1
+        rm -f "$tmpar"
+    fi
     if ! go_ok "$godir.tmp"; then
         echo "[zvk] managed Go download looks incomplete (truncated stream?); aborting" >&2
         rm -rf "$godir.tmp"

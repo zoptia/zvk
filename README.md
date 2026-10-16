@@ -44,6 +44,8 @@ zig install` to pull the latest stable Zig.
 
 > Behind a firewall, set a module proxy first:
 > `export GOPROXY=https://<your-proxy>,direct` (PowerShell: `$env:GOPROXY=...`).
+> `ZVK_GO_SITE` and `ZVK_GO_MIRROR` redirect the Go release index and archive
+> downloads, e.g. `ZVK_GO_MIRROR=https://dl.google.com/go/`.
 
 ## Update
 
@@ -311,6 +313,8 @@ toolchains or changing shell configuration.
 | `ZVK_NO_CLAUDE_MD`   | Generate the docs but don't write/inject `CLAUDE.md`    |
 | `ZVK_VERSION`        | Module version the installer builds (`self-update` forwards it) |
 | `GOPROXY`            | Go module proxy used by the installer                   |
+| `ZVK_GO_SITE`        | Go version/index site (default `https://go.dev`) |
+| `ZVK_GO_MIRROR`      | Flat directory of Go archives (e.g. `https://dl.google.com/go/`); verified against the index sha256 |
 
 ## Build from source
 
