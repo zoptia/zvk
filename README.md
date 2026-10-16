@@ -318,7 +318,7 @@ toolchains or changing shell configuration.
 
 ## Build from source
 
-Requires Go 1.26 or newer.
+Requires Go 1.27 or newer.
 
 ```sh
 go install github.com/zoptia/zvk@latest    # straight to $GOBIN
