@@ -15,7 +15,7 @@ func TestChromeHeadersFollowProfile(t *testing.T) {
 		major int
 	}{
 		{"", 150}, {"CHROME", 150}, {"chrome-latest", 150}, {"latest", 150}, {"default", 150},
-		{"chrome_133", 133}, {"chrome_150", 150}, {"chrome_152", 152}, {"CHROME_152_psk", 152},
+		{"chrome_133", 133}, {"chrome_150", 150}, {"chrome_152", 152}, {"CHROME_152_psk", 152}, {"chrome_154", 154},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			p, ok := resolveProfile(tt.name)
@@ -67,6 +67,7 @@ func TestChromeClientHintBrands(t *testing.T) {
 		133: `"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"`,
 		150: `"Not;A=Brand";v="8", "Chromium";v="150", "Google Chrome";v="150"`,
 		152: `"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"`,
+		154: `"Chromium";v="154", "Google Chrome";v="154", "Not A(Brand";v="99"`,
 	} {
 		if got := chromeSecChUa(major); got != want {
 			t.Errorf("Chrome %d: got %s, want %s", major, got, want)

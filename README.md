@@ -246,14 +246,14 @@ that first to see what will change.
 ### Browser fingerprints
 
 `zvk fetch` follows the default Chrome profile in its linked `tls-client` release.
-With `tls-client v1.16.0`, that default is Chrome 150; Chrome 152 is also available
-as an explicit profile. Existing binaries do not update profiles at runtime.
+With `tls-client v1.18.1`, that default is Chrome 150; Chrome 152 and 154 are also available
+as explicit profiles. Existing binaries do not update profiles at runtime.
 
 ```sh
 zvk fetch --list-profiles
 zvk fetch https://example.com
-zvk fetch --profile chrome_152 https://example.com
-zvk fetch --profile chrome_152_PSK https://example.com
+zvk fetch --profile chrome_154 https://example.com
+zvk fetch --profile chrome_154_PSK https://example.com
 ```
 
 Chrome User-Agent and Client Hints versions derive from the selected profile,

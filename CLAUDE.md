@@ -119,7 +119,7 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   parsing). `--dry-run` prints commands without running them.
 - `cmd_fetch.go` — a single-shot HTTP client using `tls-client` and `fhttp`.
   Default transport follows `profiles.DefaultClientProfile` in the linked library
-  (Chrome 150 in tls-client v1.16.0; Chrome 152 is selectable). Chrome User-Agent
+  (Chrome 150 in tls-client v1.18.1; Chrome 152 and 154 are selectable). Chrome User-Agent
   and Client Hints derive from the selected profile, including PSK variants;
   GREASE brands and ordering use Chromium's major-version seed. Non-Chrome
   transport profiles retain the default Chrome headers unless overridden with
