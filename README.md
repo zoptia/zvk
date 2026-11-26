@@ -169,9 +169,10 @@ stale memory (no LLM is involved — zvk only stages inputs):
 - `zig/versions/<ver>/ADAPTATION.prompt.md` — a prompt you hand to Claude; it
   reads the notes + index and writes an `ADAPTATION.md` cheat sheet of "what my
   memory gets wrong about this version".
-- `zig/CLAUDE.md` — a decision table (`zig` vs `zig-nightly` by a project's
-  `minimum_zig_version`), idempotently `@import`ed into `~/.claude/CLAUDE.md` so
-  Claude Code loads it automatically.
+- `~/.zvk/CLAUDE.md` — a few lines (installed versions, when to use `zig` vs
+  `zig-nightly` by a project's `minimum_zig_version`, where the reference is),
+  idempotently `@import`ed into `~/.claude/CLAUDE.md` so Claude Code loads it
+  automatically. It is kept short on purpose: it is in every session's context.
 
 `zvk self-install` also installs Claude Code skills for the situational
 commands: `~/.claude/skills/zvk-fetch/` and `~/.claude/skills/zvk-serve/`. Unlike

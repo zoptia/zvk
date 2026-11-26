@@ -15,9 +15,9 @@ import (
 // feature is relevant. A skill costs only its one-line description until Claude
 // Code decides it applies, then the body loads on demand. fetch and serve are
 // situational (anti-bot pages, sharing a report), so self-install writes them as
-// ~/.claude/skills/zvk-<feature>/SKILL.md. The zig decision table stays in the
-// CLAUDE.md aggregate (see claudemd.go): it is short and needed whenever Zig
-// is written.
+// ~/.claude/skills/zvk-<feature>/SKILL.md. The zig command/version rule stays
+// in <root>/CLAUDE.md (see claudemd.go): it is a few lines and needed whenever
+// Zig is written. Descriptions are always in context, so keep them short.
 //
 // Ownership: zvk only overwrites a SKILL.md that carries zvkSkillMarker, so a
 // user-authored skill with the same name is left alone.
@@ -43,7 +43,7 @@ func zvkSkills() []claudeSkill {
 }
 
 // installClaudeSkills writes zvk's skills, removes legacy per-feature
-// CLAUDE.md docs, and rebuilds the aggregate so it no longer imports them.
+// CLAUDE.md docs, and rebuilds <root>/CLAUDE.md so it no longer imports them.
 func installClaudeSkills(root string, stdout io.Writer) {
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -113,9 +113,9 @@ func (s claudeSkill) render() string {
 func fetchSkill() claudeSkill {
 	return claudeSkill{
 		name: "zvk-fetch",
-		description: "Fetch a URL with a real Chrome TLS and HTTP/2 fingerprint via `zvk fetch`. " +
-			"Use when WebFetch, curl or a script gets a Cloudflare/Akamai/anti-bot challenge, " +
-			"a 403 or 503, an empty body, or an \"enable JavaScript\" wall.",
+		description: "Fetch a URL with a real Chrome TLS/HTTP2 fingerprint via `zvk fetch`. " +
+			"Use when WebFetch or curl gets an anti-bot challenge (Cloudflare, Akamai), " +
+			"a 403/503, an empty body or an \"enable JavaScript\" wall.",
 		body: "# zvk fetch\n\n" +
 			"`zvk fetch <url>` impersonates " + profileLabel("") + " at the TLS ClientHello,\n" +
 			"HTTP/2 SETTINGS and header-order level, which anti-bot edges check and\n" +
@@ -138,10 +138,9 @@ func fetchSkill() claudeSkill {
 func serveSkill() claudeSkill {
 	return claudeSkill{
 		name: "zvk-serve",
-		description: "Share a generated file or HTML report over HTTP with `zvk serve` " +
-			"(prints local and LAN URLs), or receive files uploaded from another machine " +
-			"with `zvk serve --receive`. Use when the user wants to open a generated report " +
-			"in a browser, share it on the LAN, or transfer files between machines.",
+		description: "Share a generated file or HTML report over HTTP (localhost or LAN) with " +
+			"`zvk serve`, or receive uploads with `zvk serve --receive`. Use to let the user " +
+			"open a report in a browser or to move files between machines.",
 		body: "# zvk serve\n\n" +
 			"`zvk serve` blocks until stopped: always run it in the background, then give\n" +
 			"the user the URL it prints.\n\n" +

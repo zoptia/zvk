@@ -155,12 +155,16 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   after failure; shutdown waits for the response to finish. It blocks, so an assistant
   runs it in the background and reads the printed URL. Its assistant doc is the
   `zvk-serve` skill (`claudeskill.go`).
-- `claudemd.go` — aggregates always-relevant feature docs (currently only
-  `<root>/zig/CLAUDE.md`) into a single `<root>/CLAUDE.md` and injects exactly
-  ONE `@import` into the user's global `~/.claude/CLAUDE.md`, migrating away
-  older per-feature imports. With no feature doc, it removes the aggregate and
-  the import. Doc writers call `refreshZvkClaudeMd` after writing. Gated by
-  `ZVK_NO_DOCS` / `ZVK_NO_CLAUDE_MD`.
+- `claudemd.go` — generates the single `<root>/CLAUDE.md` and injects exactly
+  ONE `@import` of it into the user's global `~/.claude/CLAUDE.md`. That file is
+  loaded into **every** Claude Code session, so it is a context budget, not a
+  doc: sections (`claudeMdSections`, currently only `zigClaudeSection`) are a
+  few inline lines, with no nested imports, and notes for humans live in an
+  HTML comment (Claude Code strips those). `TestAlwaysLoadedContextBudget` pins
+  the text and size; anything situational belongs in a skill instead. It
+  migrates away older per-feature files/imports, and removes the file and the
+  import when no section has content. Call `refreshZvkClaudeMd` after anything
+  that changes a section. Gated by `ZVK_NO_DOCS` / `ZVK_NO_CLAUDE_MD`.
 - `claudeskill.go` — situational features (`fetch`, `serve`) are Claude Code
   skills, not `@import`s: a CLAUDE.md import loads in full into every session,
   while a skill costs only its one-line `description` until it is needed.
@@ -173,8 +177,8 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   target *that* build instead of stale memory: `REFERENCE.<channel>.md`
   (version-pinned pointers + grep topic map), `STD_INDEX.md` (column-0 `pub`
   decls per top-level `lib/std` file — not the ~25k full tree), a local
-  `release-notes.html` snapshot, an `ADAPTATION.prompt.md`, and `zig/CLAUDE.md`
-  (surfaced to the assistant via the aggregate in `claudemd.go`). A dev/nightly
+  `release-notes.html` snapshot, an `ADAPTATION.prompt.md`, and the zig section
+  of `<root>/CLAUDE.md` (`zigClaudeSection`, see `claudemd.go`). A dev/nightly
   build has no published `release-notes.html` (the URL 404s), so it skips that
   fetch and points the REFERENCE/ADAPTATION at the master std commit log
   instead. zvk never calls an LLM —
