@@ -178,7 +178,10 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   (version-pinned pointers + grep topic map), `STD_INDEX.md` (column-0 `pub`
   decls per top-level `lib/std` file — not the ~25k full tree), a local
   `release-notes.html` snapshot, an `ADAPTATION.prompt.md`, and the zig section
-  of `<root>/CLAUDE.md` (`zigClaudeSection`, see `claudemd.go`). A dev/nightly
+  of `<root>/CLAUDE.md` (`zigClaudeSection`, see `claudemd.go`). Zig publishes
+  one release-notes page per minor series, not per patch release (0.17.1 uses
+  0.17.0's; 0.15.2 uses 0.15.1's), so `fetchZigReleaseNotes` walks the patch
+  number down until a page exists. A dev/nightly
   build has no published `release-notes.html` (the URL 404s), so it skips that
   fetch and points the REFERENCE/ADAPTATION at the master std commit log
   instead. zvk never calls an LLM —

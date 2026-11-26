@@ -729,3 +729,34 @@ func TestInstallPrunesOldNightlies(t *testing.T) {
 		t.Error("only zig should prune versions")
 	}
 }
+
+func TestZigReleaseNotesFallBackWithinSeries(t *testing.T) {
+	url := func(v string) string { return "https://ziglang.org/download/" + v + "/release-notes.html" }
+	for version, want := range map[string][]string{
+		"0.17.0":                    {url("0.17.0")},
+		"0.17.1":                    {url("0.17.1"), url("0.17.0")},
+		"0.15.2":                    {url("0.15.2"), url("0.15.1"), url("0.15.0")},
+		"0.18.0-dev.1295+1fb0e6330": {url("0.18.0")},
+	} {
+		if got := zigReleaseNotesURLs(version); strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("%s: got %v, want %v", version, got, want)
+		}
+	}
+
+	// Only 0.15.1 publishes notes for the 0.15 series.
+	var asked []string
+	get := func(u string) ([]byte, error) {
+		asked = append(asked, u)
+		if u == url("0.15.1") {
+			return []byte("notes"), nil
+		}
+		return nil, fmt.Errorf("http %s: 404 Not Found", u)
+	}
+	data, from, err := fetchZigReleaseNotes("0.15.2", get)
+	if err != nil || string(data) != "notes" || from != url("0.15.1") || len(asked) != 2 {
+		t.Fatalf("data=%q from=%s err=%v asked=%v", data, from, err, asked)
+	}
+	if _, _, err := fetchZigReleaseNotes("0.13.0", get); err == nil || !strings.Contains(err.Error(), url("0.13.0")) {
+		t.Fatalf("expected the exact version's error, got %v", err)
+	}
+}

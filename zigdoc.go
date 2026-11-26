@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -59,12 +60,16 @@ func writeZigDocs(root, version, channel string, stdout io.Writer) {
 	notesURL := zigReleaseNotesURL(version)
 	notesLocal := false
 	if channel != "nightly" {
-		if data, err := downloadToMemory(notesURL); err != nil {
+		data, url, err := fetchZigReleaseNotes(version, downloadToMemory)
+		if err != nil {
 			zigDocNote(stdout, "could not fetch release notes (%v); REFERENCE keeps the online URL", err)
-		} else if err := writeFileAtomic(notesPath, data, 0o644); err != nil {
-			zigDocNote(stdout, "could not save release notes: %v", err)
 		} else {
-			notesLocal = true
+			notesURL = url // may be an earlier patch release of the same series
+			if err := writeFileAtomic(notesPath, data, 0o644); err != nil {
+				zigDocNote(stdout, "could not save release notes: %v", err)
+			} else {
+				notesLocal = true
+			}
 		}
 	}
 
@@ -107,6 +112,43 @@ func zigReleaseNotesURL(version string) string {
 		notesVer = version[:i]
 	}
 	return "https://ziglang.org/download/" + notesVer + "/release-notes.html"
+}
+
+// zigReleaseNotesURLs lists where a tagged release's notes may live, most
+// specific first. Zig publishes one release-notes page per minor series, not per
+// patch release, and not always at x.y.0 (0.17.1 → 0.17.0, but 0.15.2 → 0.15.1
+// because 0.15.0 has none), so the candidates walk the patch number down to 0.
+func zigReleaseNotesURLs(version string) []string {
+	urls := []string{zigReleaseNotesURL(version)}
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return urls
+	}
+	patch, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return urls
+	}
+	for p := patch - 1; p >= 0; p-- {
+		urls = append(urls, zigReleaseNotesURL(fmt.Sprintf("%s.%s.%d", parts[0], parts[1], p)))
+	}
+	return urls
+}
+
+// fetchZigReleaseNotes downloads the first candidate page that exists and
+// returns it with its URL. On failure it reports the error for the exact
+// version's URL.
+func fetchZigReleaseNotes(version string, get func(url string) ([]byte, error)) ([]byte, string, error) {
+	var firstErr error
+	for _, url := range zigReleaseNotesURLs(version) {
+		data, err := get(url)
+		if err == nil {
+			return data, url, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, "", firstErr
 }
 
 // ----------------------------------------------------------------------------
