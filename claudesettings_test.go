@@ -40,7 +40,8 @@ func TestClaudeEnvDefaultPreservesSettings(t *testing.T) {
 	if got := readText(t, path); got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
 	}
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
+	// Windows has no Unix permission bits: Go reports 0666 for any writable file.
+	if info, _ := os.Stat(path); !isWindows() && info.Mode().Perm() != 0o600 {
 		t.Errorf("mode not preserved: %v", info.Mode())
 	}
 }
