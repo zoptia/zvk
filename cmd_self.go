@@ -76,10 +76,14 @@ func runSelfInstall(stdout io.Writer) error {
 		return err
 	}
 
-	// Teach the assistant about the non-toolchain features (best-effort; never
-	// fails install). Each writes its doc and refreshes the aggregate CLAUDE.md.
-	writeFetchDoc(root, stdout)
-	writeServeDoc(root, stdout)
+	// Apply zvk's Claude Code defaults when Claude Code is present. Checked
+	// before the skills are written, since those create ~/.claude themselves.
+	if claudeCodePresent() {
+		configureClaudeCode(stdout)
+	}
+	// Teach the assistant about the non-toolchain features as on-demand Claude
+	// Code skills (best-effort; never fails install). See claudeskill.go.
+	installClaudeSkills(root, stdout)
 
 	fmt.Fprintln(stdout, "[zvk] done")
 	return nil

@@ -108,8 +108,17 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   installer (e.g. winget ships with Windows' App Installer) — it just prints
   `installHint`. `app list` shows only recipes whose `osSupport` matches the
   current GOOS. This is deliberately not a package manager — no version tracking,
-  no bin symlinks; `uninstall` just prints the official steps. Adding one =
-  appending an `appRecipe`.
+  no bin symlinks; `uninstall` just prints the official steps. An optional
+  `configure` hook applies zvk defaults after install or when the app is already
+  installed (claude-code uses `configureClaudeCode`). Adding one = appending an
+  `appRecipe`.
+- `claudesettings.go` — zvk's Claude Code defaults: adds
+  `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1` to `env` in `~/.claude/settings.json`
+  (on `app install claude-code`, and on `self-install` when `claudeCodePresent`).
+  Edits are minimal and order-preserving (`parseJSONObject` keeps members in
+  source order with raw values); an existing key is never overridden, a non-object
+  file is left untouched, and symlinks are written through. Gated by
+  `ZVK_NO_CLAUDE_MD`.
 - `cmd_vminit.go` — `app vminit`: unlike the install recipes, this reconfigures
   the *local* host into a low-footprint VM node (hostname → `vm-<primary-ipv4>`,
   no sleep, no file indexing, no GUI on Linux / reduced animations on macOS).
@@ -125,7 +134,8 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   transport profiles retain the default Chrome headers unless overridden with
   `-A`/`-H`. Profile keys are case-insensitive and `--list-profiles` reports the
   resolved default. Fingerprinting can improve compatibility but does not execute
-  JavaScript or guarantee access. `fetchdoc.go` writes `<root>/fetch/CLAUDE.md`.
+  JavaScript or guarantee access. Its assistant doc is the `zvk-fetch` skill
+  (`claudeskill.go`).
 - `cmd_serve.go` — the `serve` command: a stdlib `net/http` static file server
   to share a generated report over HTTP. Binds `0.0.0.0` by default (prints a
   localhost + a LAN URL via `primaryIPv4`); `--local` restricts to loopback.
@@ -143,14 +153,21 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
   uploads replace the destination by rename. `--max-bytes` defaults to 1 GiB
   (0 disables the limit). Once mode admits one upload at a time and permits retries
   after failure; shutdown waits for the response to finish. It blocks, so an assistant
-  runs it in the background and reads the printed URL. Also writes its own
-  `<root>/serve/CLAUDE.md` pointer.
-- `claudemd.go` — aggregates each feature's `<root>/<feature>/CLAUDE.md` into a
-  single `<root>/CLAUDE.md` and injects exactly ONE `@import` into the user's
-  global `~/.claude/CLAUDE.md`, migrating away older per-feature imports. Every
-  feature doc writer (`zigdoc`, `fetchdoc`, `cmd_serve`) calls
-  `refreshZvkClaudeMd` after writing its pointer. Gated by `ZVK_NO_DOCS` /
-  `ZVK_NO_CLAUDE_MD`.
+  runs it in the background and reads the printed URL. Its assistant doc is the
+  `zvk-serve` skill (`claudeskill.go`).
+- `claudemd.go` — aggregates always-relevant feature docs (currently only
+  `<root>/zig/CLAUDE.md`) into a single `<root>/CLAUDE.md` and injects exactly
+  ONE `@import` into the user's global `~/.claude/CLAUDE.md`, migrating away
+  older per-feature imports. With no feature doc, it removes the aggregate and
+  the import. Doc writers call `refreshZvkClaudeMd` after writing. Gated by
+  `ZVK_NO_DOCS` / `ZVK_NO_CLAUDE_MD`.
+- `claudeskill.go` — situational features (`fetch`, `serve`) are Claude Code
+  skills, not `@import`s: a CLAUDE.md import loads in full into every session,
+  while a skill costs only its one-line `description` until it is needed.
+  `self-install` writes `~/.claude/skills/zvk-{fetch,serve}/SKILL.md`, only
+  overwriting files carrying `zvkSkillMarker` (a user's same-named skill is left
+  alone), and removes legacy `<root>/{fetch,serve}/CLAUDE.md`. Gated by
+  `ZVK_NO_DOCS` / `ZVK_NO_CLAUDE_MD`.
 - `zigdoc.go` — the zig driver's `postInstall` hook (`writeZigDocs`). After a
   zig install it deterministically stages the raw material an assistant needs to
   target *that* build instead of stale memory: `REFERENCE.<channel>.md`
@@ -237,7 +254,7 @@ download+extract pipeline).
 | `ZVK_NO_MODIFY_PATH` | Skip writing PATH to shell rc |
 | `ZVK_NO_MINISIGN` | Skip minisign verification of Zig tarballs (dev only) |
 | `ZVK_NO_DOCS` | Skip generating the zig Claude Code reference docs (see `zigdoc.go`) |
-| `ZVK_NO_CLAUDE_MD` | Generate the zig reference docs but don't write/inject `CLAUDE.md` |
+| `ZVK_NO_CLAUDE_MD` | Generate the zig reference docs but don't write into `~/.claude` (no `CLAUDE.md` import, no skills, no `settings.json` defaults) |
 | `ZVK_VERSION` | Module version the installer / `self-update` installs |
 | `GOPROXY` | Go module proxy used by the installer and `self-update` |
 | `ZVK_GO_SITE` | Site serving the Go version/index in go.dev's `/VERSION` + `/dl/?mode=json` layout (default `https://go.dev`); used by the installers and `zvk go` |

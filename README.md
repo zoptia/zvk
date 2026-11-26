@@ -173,8 +173,14 @@ stale memory (no LLM is involved — zvk only stages inputs):
   `minimum_zig_version`), idempotently `@import`ed into `~/.claude/CLAUDE.md` so
   Claude Code loads it automatically.
 
+`zvk self-install` also installs Claude Code skills for the situational
+commands: `~/.claude/skills/zvk-fetch/` and `~/.claude/skills/zvk-serve/`. Unlike
+a `CLAUDE.md` import, a skill only keeps its one-line description in context
+and loads the rest when Claude needs it. zvk never overwrites a same-named
+skill it did not generate.
+
 Disable with `ZVK_NO_DOCS` (skip entirely) or `ZVK_NO_CLAUDE_MD` (keep the docs
-but don't touch any `CLAUDE.md`).
+but don't write anything into `~/.claude`).
 
 ### Go
 
@@ -213,6 +219,12 @@ manager — no version tracking, no bookkeeping.
   `install.sh` non-interactively; Claude Code's `install.sh`; scoop's
   `iwr | iex`). No-op if already installed. Some apps have no install script
   (winget ships with Windows' App Installer) — those just print where to get it.
+  For Claude Code, zvk also turns off the in-session "How is Claude doing?"
+  survey by adding `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1` to the `env` block of
+  `~/.claude/settings.json`, even when Claude Code was already installed. Only
+  that key is added; the rest of the file is kept as is, and a value you set
+  yourself is never overridden. `zvk self-install` does the same when it finds
+  Claude Code. `ZVK_NO_CLAUDE_MD=1` skips it.
 - `zvk app uninstall <name>` — prints the official removal steps; zvk never
   deletes a system tool it didn't lay out itself.
 
@@ -310,7 +322,7 @@ toolchains or changing shell configuration.
 | `ZVK_NO_MODIFY_PATH` | Skip writing to shell rc                                |
 | `ZVK_NO_MINISIGN`    | Skip minisign verification of Zig tarballs (not advised) |
 | `ZVK_NO_DOCS`        | Skip generating the Zig assistant reference docs        |
-| `ZVK_NO_CLAUDE_MD`   | Generate the docs but don't write/inject `CLAUDE.md`    |
+| `ZVK_NO_CLAUDE_MD`   | Generate the docs but don't write into `~/.claude` (no `CLAUDE.md` import, no skills, no `settings.json` defaults) |
 | `ZVK_VERSION`        | Module version the installer builds (`self-update` forwards it) |
 | `GOPROXY`            | Go module proxy used by the installer                   |
 | `ZVK_GO_SITE`        | Go version/index site (default `https://go.dev`) |

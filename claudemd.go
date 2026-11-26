@@ -20,6 +20,9 @@ import (
 // refreshZvkClaudeMd is called after any feature writes its doc (zig install,
 // self-install). It also migrates older layouts: the injector strips any prior
 // per-feature zvk imports so an upgrade collapses them into the single line.
+// Situational features (fetch, serve) are Claude Code skills instead, loaded
+// on demand (see claudeskill.go); only always-relevant docs belong here. When
+// no feature doc exists, the aggregate and its global import are removed.
 //
 // Gated by ZVK_NO_DOCS (skip everything) / ZVK_NO_CLAUDE_MD (build the
 // aggregate but don't touch the global file).
@@ -29,8 +32,6 @@ import (
 // order they appear in the aggregate.
 var featureClaudeDocs = []struct{ dir, title string }{
 	{"zig", "Zig toolchain (version selection + per-build reference)"},
-	{"fetch", "Browser-fingerprint HTTP fetch (anti-bot pages)"},
-	{"serve", "HTTP share (serve a generated report)"},
 }
 
 func refreshZvkClaudeMd(root string, stdout io.Writer) {
@@ -55,11 +56,18 @@ func refreshZvkClaudeMd(root string, stdout io.Writer) {
 			any = true
 		}
 	}
+	aggPath := filepath.Join(absRoot, "CLAUDE.md")
 	if !any {
+		if err := os.Remove(aggPath); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(stdout, "[zvk] note: could not remove %s: %v\n", aggPath, err)
+		}
+		if os.Getenv("ZVK_NO_CLAUDE_MD") == "" {
+			if err := syncAggregateImport(absRoot, aggPath, false); err != nil {
+				fmt.Fprintf(stdout, "[zvk] note: could not update ~/.claude/CLAUDE.md: %v\n", err)
+			}
+		}
 		return
 	}
-
-	aggPath := filepath.Join(absRoot, "CLAUDE.md")
 	if err := writeFileAtomic(aggPath, []byte(b.String()), 0o644); err != nil {
 		fmt.Fprintf(stdout, "[zvk] note: could not write %s: %v\n", aggPath, err)
 		return
@@ -67,16 +75,17 @@ func refreshZvkClaudeMd(root string, stdout io.Writer) {
 	if os.Getenv("ZVK_NO_CLAUDE_MD") != "" {
 		return
 	}
-	if err := injectAggregateImport(absRoot, aggPath); err != nil {
+	if err := syncAggregateImport(absRoot, aggPath, true); err != nil {
 		fmt.Fprintf(stdout, "[zvk] note: could not link CLAUDE.md into ~/.claude/CLAUDE.md: %v\n", err)
 	}
 }
 
-// injectAggregateImport makes ~/.claude/CLAUDE.md @import the aggregate exactly
-// once, removing any prior zvk-injected lines first: the aggregate import
-// itself (idempotent re-run) and legacy per-feature imports under <root>, along
-// with the "# Added by zvk" markers that preceded them.
-func injectAggregateImport(root, aggPath string) error {
+// syncAggregateImport removes every zvk-injected line from ~/.claude/CLAUDE.md:
+// the aggregate import itself (idempotent re-run) and legacy per-feature imports
+// under <root>, along with the "# Added by zvk" markers that preceded them. With
+// add, it then appends the aggregate import exactly once. The file is rewritten
+// only when its content changes, and never created just to remove lines.
+func syncAggregateImport(root, aggPath string, add bool) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -85,6 +94,9 @@ func injectAggregateImport(root, aggPath string) error {
 	existing, err := os.ReadFile(globalPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	if err != nil && !add {
+		return nil
 	}
 
 	importLine := "@" + aggPath
@@ -112,7 +124,12 @@ func injectAggregateImport(root, aggPath string) error {
 	if len(buf) > 0 {
 		buf += "\n"
 	}
-	buf += "\n# Added by zvk\n" + importLine + "\n"
+	if add {
+		buf += "\n# Added by zvk\n" + importLine + "\n"
+	}
+	if buf == string(existing) {
+		return nil
+	}
 
 	if err := os.MkdirAll(filepath.Dir(globalPath), 0o755); err != nil {
 		return err

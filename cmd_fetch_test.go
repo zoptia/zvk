@@ -103,7 +103,7 @@ func TestFetchProfileReporting(t *testing.T) {
 	if got := profileLabel(""); got != "Chrome-150" {
 		t.Fatalf("status hides resolved default: %s", got)
 	}
-	if !strings.Contains(fetchClaudeMd(), "Chrome-150") {
+	if !strings.Contains(fetchSkill().render(), "Chrome-150") {
 		t.Fatal("generated reference does not identify the linked default")
 	}
 }

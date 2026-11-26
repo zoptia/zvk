@@ -47,6 +47,7 @@ type appRecipe struct {
 	osSupport   []string                     // GOOS values this supports; empty = all
 	detectCmd   string                       // command name to look for on PATH ("" = can't detect)
 	install     func(stdout io.Writer) error // nil = no automated install; use installHint
+	configure   func(stdout io.Writer)       // optional zvk defaults, applied after install or when already installed
 	installHint string                       // how to install manually, shown when install is nil
 	uninstall   string                       // human instructions (app never deletes for you)
 	docURL      string
@@ -77,6 +78,7 @@ var appRecipes = []*appRecipe{
 			// Official native installer (no Node required).
 			return runShellScript("https://claude.ai/install.sh", "bash", nil, stdout)
 		},
+		configure: configureClaudeCode, // see claudesettings.go
 		uninstall: "remove the `claude` binary the installer placed (typically ~/.local/bin/claude); see the docs",
 		docURL:    "https://docs.claude.com/en/docs/claude-code",
 	},
@@ -206,6 +208,7 @@ func runAppInstall(name string, stdout io.Writer) error {
 	}
 	if p, ok := a.detect(); ok {
 		fmt.Fprintf(stdout, "[zvk app] %s already installed at %s\n", name, p)
+		a.applyConfig(stdout)
 		return nil
 	}
 	if a.install == nil {
@@ -224,7 +227,14 @@ func runAppInstall(name string, stdout io.Writer) error {
 	} else {
 		fmt.Fprintf(stdout, "[zvk app] %s installed; you may need to restart your shell for it to appear on PATH\n", name)
 	}
+	a.applyConfig(stdout)
 	return nil
+}
+
+func (a *appRecipe) applyConfig(stdout io.Writer) {
+	if a.configure != nil {
+		a.configure(stdout)
+	}
 }
 
 func runAppUninstall(name string, stdout io.Writer) error {
