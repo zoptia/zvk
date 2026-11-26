@@ -47,6 +47,12 @@ type toolchain struct {
 	// bins lists the bin/ entries to wire up for a channel.
 	bins func(channel string) []binSpec
 
+	// rolling reports whether a version belongs to a rolling channel (e.g. a zig
+	// nightly build). After installing a rolling version, every other rolling
+	// version that no channel points at is removed, so only the newest is kept.
+	// nil means versions are never pruned.
+	rolling func(version string) bool
+
 	// listRemote prints available upstream versions for `list --remote`. nil
 	// means the toolchain doesn't support remote listing.
 	listRemote func(stdout io.Writer) error
@@ -256,6 +262,7 @@ func toolchainInstall(tc *toolchain, channel, requestedRaw string, stdout io.Wri
 		return err
 	}
 	fmt.Fprintf(stdout, "%s channel '%s' -> %s\n", tag, channel, asset.version)
+	tc.pruneRolling(root, asset.version, stdout)
 
 	if err := setupPath(binDir(root), stdout); err != nil {
 		return err
@@ -266,6 +273,49 @@ func toolchainInstall(tc *toolchain, channel, requestedRaw string, stdout io.Wri
 	}
 	fmt.Fprintf(stdout, "%s done\n", tag)
 	return nil
+}
+
+// pruneRolling removes superseded rolling versions after `installed` was
+// activated: every other version dir the driver classifies as rolling, unless a
+// channel still points at it. Stable versions are never touched. Callers hold
+// the toolchain lock. Best-effort: a failure prints an advisory and never fails
+// the install.
+func (tc *toolchain) pruneRolling(root, installed string, stdout io.Writer) {
+	if tc.rolling == nil || !tc.rolling(installed) {
+		return
+	}
+	tag := "[zvk " + tc.name + "]"
+	keep := map[string]bool{installed: true}
+	for _, ch := range tc.channelNames() {
+		active, err := tc.dirs.readActive(root, ch)
+		if err != nil {
+			fmt.Fprintf(stdout, "%s note: not pruning old versions: %v\n", tag, err)
+			return
+		}
+		keep[active] = true
+	}
+	versions, err := os.OpenRoot(tc.dirs.versionsDir(root))
+	if err != nil {
+		fmt.Fprintf(stdout, "%s note: not pruning old versions: %v\n", tag, err)
+		return
+	}
+	defer versions.Close()
+	entries, err := os.ReadDir(tc.dirs.versionsDir(root))
+	if err != nil {
+		fmt.Fprintf(stdout, "%s note: not pruning old versions: %v\n", tag, err)
+		return
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if !e.IsDir() || keep[name] || !tc.rolling(name) || validateName("version", name) != nil {
+			continue
+		}
+		if err := versions.RemoveAll(name); err != nil {
+			fmt.Fprintf(stdout, "%s note: could not remove old version %s: %v\n", tag, name, err)
+			continue
+		}
+		fmt.Fprintf(stdout, "%s removed old version %s\n", tag, name)
+	}
 }
 
 // toolchainUpdate re-runs install at latest for one channel, the default

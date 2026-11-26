@@ -218,7 +218,10 @@ real binary by absolute path (see `channel.go` and `toolchain.go`'s `installBin`
 6. Preflight channel/bin entries, activate with rollback on write errors, then
    `setupPath(bin)`. POSIX switches the channel last via rename; Windows shim
    updates are individually replaced, with rollback on ordinary errors (the group
-   is not crash-atomic).
+   is not crash-atomic). If the driver's `rolling(version)` says the installed
+   version is a rolling build (zig nightly, `-dev`), `pruneRolling` then removes
+   every other rolling version no channel points at, so only the newest nightly
+   stays on disk; stable versions are never pruned (go/node leave `rolling` nil).
 7. Optional `postInstall(root, ver, channel)` for side artifacts — zig uses it
    for the Claude Code reference docs (`zigdoc.go`); go/node leave it nil.
 

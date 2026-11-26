@@ -150,7 +150,10 @@ zvk help
    (`github.com/ulikunitz/xz` + stdlib `archive/tar`) into
    `~/.zvk/zig/versions/<ver>/`.
 4. Maintain the channel symlink and the bin symlink.
-5. Generate **assistant reference docs** for that build (see below).
+5. After a nightly install, remove older nightly builds (`0.X.Y-dev.…`): only
+   the newest is kept. Tagged releases and any version a channel still points
+   at are never removed.
+6. Generate **assistant reference docs** for that build (see below).
 
 #### Assistant reference docs (Zig only)
 

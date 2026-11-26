@@ -672,3 +672,60 @@ func TestShutdownWaitsForResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestInstallPrunesOldNightlies(t *testing.T) {
+	root := t.TempDir()
+	mk := func(v string) {
+		putFile(t, filepath.Join(zigDirs.versionDir(root, v), zigExeName()), "x")
+	}
+	const (
+		stable, oldStable  = "0.17.1", "0.16.0"
+		newest, old, older = "0.18.0-dev.30+ccc", "0.18.0-dev.20+bbb", "0.18.0-dev.10+aaa"
+		pinned             = "0.18.0-dev.5+ddd"
+	)
+	for _, v := range []string{stable, oldStable, newest, old, older, pinned} {
+		mk(v)
+	}
+	putFile(t, filepath.Join(zigDirs.versionsDir(root), "0.18.0-dev.1+file"), "not a directory")
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(zigDirs.setActive(root, "release", pinned)) // a channel still points at an old nightly
+	must(zigDirs.setActive(root, "nightly", newest))
+	exists := func(v string) bool { return pathExists(zigDirs.versionDir(root, v)) }
+
+	// Installing a stable release prunes nothing.
+	zigTC.pruneRolling(root, stable, io.Discard)
+	for _, v := range []string{old, older} {
+		if !exists(v) {
+			t.Fatalf("%s removed by a stable install", v)
+		}
+	}
+
+	var out bytes.Buffer
+	zigTC.pruneRolling(root, newest, &out)
+	for _, v := range []string{old, older} {
+		if exists(v) {
+			t.Errorf("superseded nightly %s kept", v)
+		}
+		if !strings.Contains(out.String(), "removed old version "+v) {
+			t.Errorf("removal of %s not reported:\n%s", v, out.String())
+		}
+	}
+	for _, v := range []string{stable, oldStable, newest, pinned} {
+		if !exists(v) {
+			t.Errorf("%s must be kept", v)
+		}
+	}
+	if !fileExists(filepath.Join(zigDirs.versionsDir(root), "0.18.0-dev.1+file")) {
+		t.Error("non-directory entry removed")
+	}
+
+	// Go and Node have no rolling versions.
+	if goTC.rolling != nil || nodeTC.rolling != nil {
+		t.Error("only zig should prune versions")
+	}
+}

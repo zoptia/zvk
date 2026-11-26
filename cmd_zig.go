@@ -35,7 +35,7 @@ const zigUsage = `Usage:
 var zigDirs = toolDirs{name: "zig"}
 
 // zigTC is the Zig driver. Release picks the latest semver from the index;
-// nightly tracks `master`. Tarballs are verified by sha256 then minisign.
+// nightly tracks `master` and keeps only the newest build on disk. Tarballs are verified by sha256 then minisign.
 var zigTC = &toolchain{
 	name:           "zig",
 	usage:          zigUsage,
@@ -77,6 +77,9 @@ var zigTC = &toolchain{
 	},
 	resolve:     resolveZigAsset,
 	postInstall: writeZigDocs,
+	// Nightly builds ("0.X.Y-dev.N+HASH") are large and superseded daily, so only
+	// the newest is kept; tagged releases are never pruned.
+	rolling: func(version string) bool { return strings.Contains(version, "-dev") },
 }
 
 func zigExeName() string {
